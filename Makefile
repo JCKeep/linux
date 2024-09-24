@@ -929,6 +929,7 @@ ifdef CONFIG_SHADOW_CALL_STACK
 ifndef CONFIG_DYNAMIC_SCS
 CC_FLAGS_SCS	:= -fsanitize=shadow-call-stack
 KBUILD_CFLAGS	+= $(CC_FLAGS_SCS)
+KBUILD_RUSTFLAGS += -Zsanitizer=shadow-call-stack
 endif
 export CC_FLAGS_SCS
 endif
@@ -953,6 +954,16 @@ endif
 
 ifdef CONFIG_CFI_CLANG
 CC_FLAGS_CFI	:= -fsanitize=kcfi
+ifdef CONFIG_CFI_ICALL_NORMALIZE_INTEGERS
+	CC_FLAGS_CFI	+= -fsanitize-cfi-icall-experimental-normalize-integers
+endif
+ifdef CONFIG_RUST
+	# Always pass -Zsanitizer-cfi-normalize-integers as CONFIG_RUST selects
+	# CONFIG_CFI_ICALL_NORMALIZE_INTEGERS.
+	RUSTC_FLAGS_CFI   := -Zsanitizer=kcfi -Zsanitizer-cfi-normalize-integers
+	KBUILD_RUSTFLAGS += $(RUSTC_FLAGS_CFI)
+	export RUSTC_FLAGS_CFI
+endif
 KBUILD_CFLAGS	+= $(CC_FLAGS_CFI)
 export CC_FLAGS_CFI
 endif
