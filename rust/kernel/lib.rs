@@ -38,6 +38,7 @@ pub mod error;
 pub mod firmware;
 pub mod fs;
 pub mod init;
+pub mod io_buffer;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
