@@ -40,6 +40,7 @@ pub mod fs;
 pub mod init;
 pub mod io_buffer;
 pub mod ioctl;
+pub mod iov_iter;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 pub mod list;
