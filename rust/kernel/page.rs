@@ -5,9 +5,8 @@
 use crate::{
     alloc::{AllocError, Flags},
     bindings,
-    error::code::*,
-    error::Result,
-    uaccess::UserSliceReader,
+    error::{code::*, Result},
+    uaccess::{UserSliceReader, UserSliceWriter},
 };
 use core::ptr::{self, NonNull};
 
@@ -238,6 +237,32 @@ impl Page {
             // bounds check and guarantees that `dst` is valid for `len` bytes. Furthermore, we have
             // exclusive access to the slice since the caller guarantees that there are no races.
             reader.read_raw(unsafe { core::slice::from_raw_parts_mut(dst.cast(), len) })
+        })
+    }
+
+    /// Copies data in this page to userspace.
+    ///
+    /// This method will perform bounds checks on the page offset. If `offset .. offset+len` goes
+    /// outside of the page, then this call returns [`EINVAL`].
+    ///
+    /// Like the other `UserSliceWriter` methods, data races are allowed on the userspace address.
+    /// However, they are not allowed on the page you are copying into.
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure that this call does not race with a read or write to the same page that
+    /// overlaps with this write.
+    pub unsafe fn copy_to_user_slice_raw(
+        &self,
+        writer: &mut UserSliceWriter,
+        offset: usize,
+        len: usize,
+    ) -> Result {
+        self.with_pointer_into_page(offset, len, move |src| {
+            // SAFETY: If `with_pointer_into_page` calls into this closure, then it has performed a
+            // bounds check and guarantees that `src` is valid for `len` bytes. Furthermore, we have
+            // exclusive access to the slice since the caller guarantees that there are no races.
+            writer.write_slice(unsafe { core::slice::from_raw_parts(src.cast(), len) })
         })
     }
 }
