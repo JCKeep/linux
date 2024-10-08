@@ -13,3 +13,8 @@ unsigned long rust_helper_copy_to_user(void __user *to, const void *from,
 {
 	return copy_to_user(to, from, n);
 }
+
+unsigned long rust_helper_clear_user(void __user *to, unsigned long n)
+{
+	return clear_user(to, n);
+}
