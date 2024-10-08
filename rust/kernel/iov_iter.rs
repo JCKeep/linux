@@ -3,7 +3,7 @@
 //! IO vector iterators.
 //!
 //! C header: [`include/linux/uio.h`](../../../../include/linux/uio.h)
-
+#![allow(dead_code)]
 use crate::{
     bindings,
     error::{code::*, Result},

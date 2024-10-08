@@ -13,12 +13,10 @@ use crate::{
     bindings,
     cred::Credential,
     error::{code::*, from_result, Error, Result},
-    io_buffer::{IoBufferReader, IoBufferWriter},
-    iov_iter::IovIter,
     mm,
     sync::poll::PollTable,
     types::{ARef, AlwaysRefCounted, ForeignOwnable, NotThreadSafe, Opaque},
-    user_ptr::{UserSlicePtr, UserSlicePtrReader, UserSlicePtrWriter},
+    uaccess::{UserSlice, UserSliceReader, UserSliceWriter},
 };
 use core::{marker, mem, pin::Pin, ptr};
 
@@ -499,7 +497,7 @@ pub trait IoctlHandler: Sync {
         _this: Self::Target<'_>,
         _file: &File,
         _cmd: u32,
-        _writer: &mut UserSlicePtrWriter,
+        _writer: &mut UserSliceWriter,
     ) -> Result<i32> {
         Err(EINVAL)
     }
@@ -510,7 +508,7 @@ pub trait IoctlHandler: Sync {
         _this: Self::Target<'_>,
         _file: &File,
         _cmd: u32,
-        _reader: &mut UserSlicePtrReader,
+        _reader: &mut UserSliceReader,
     ) -> Result<i32> {
         Err(EINVAL)
     }
@@ -521,7 +519,7 @@ pub trait IoctlHandler: Sync {
         _this: Self::Target<'_>,
         _file: &File,
         _cmd: u32,
-        _data: UserSlicePtr,
+        _data: UserSlice,
     ) -> Result<i32> {
         Err(EINVAL)
     }
@@ -534,7 +532,7 @@ pub trait IoctlHandler: Sync {
 pub struct IoctlCommand {
     cmd: u32,
     arg: usize,
-    user_slice: Option<UserSlicePtr>,
+    user_slice: Option<UserSlice>,
 }
 
 impl IoctlCommand {
@@ -542,9 +540,7 @@ impl IoctlCommand {
     fn new(cmd: u32, arg: usize) -> Self {
         let size = (cmd >> bindings::_IOC_SIZESHIFT) & bindings::_IOC_SIZEMASK;
 
-        // SAFETY: We only create one instance of the user slice per ioctl call, so TOCTOU issues
-        // are not possible.
-        let user_slice = Some(unsafe { UserSlicePtr::new(arg as _, size as _) });
+        let user_slice = Some(UserSlice::new(arg as _, size as _));
         Self {
             cmd,
             arg,
@@ -553,7 +549,7 @@ impl IoctlCommand {
     }
 
     /// Dispatches the given ioctl to the appropriate handler based on the value of the command. It
-    /// also creates a [`UserSlicePtr`], [`UserSlicePtrReader`], or [`UserSlicePtrWriter`]
+    /// also creates a [`UserSlice`], [`UserSliceReader`], or [`UserSliceWriter`]
     /// depending on the direction of the buffer of the command.
     ///
     /// It is meant to be used in implementations of [`Operations::ioctl`] and
@@ -627,8 +623,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         offset: *mut bindings::loff_t,
     ) -> core::ffi::c_ssize_t {
         from_result(|| {
-            let mut data =
-                unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).writer() };
+            let mut data = UserSlice::new(buf as _, len).writer();
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
             // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
@@ -648,31 +643,6 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         })
     }
 
-    unsafe extern "C" fn read_iter_callback(
-        iocb: *mut bindings::kiocb,
-        raw_iter: *mut bindings::iov_iter,
-    ) -> isize {
-        from_result(|| {
-            let mut iter = unsafe { IovIter::from_ptr(raw_iter) };
-            let file = unsafe { (*iocb).ki_filp };
-            let offset = unsafe { (*iocb).ki_pos };
-            // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
-            // `release` callback, which the C API guarantees that will be called only when all
-            // references to `file` have been released, so we know it can't be called while this
-            // function is running.
-            let f = unsafe { T::Data::borrow((*file).private_data) };
-            let read = T::read(
-                f,
-                unsafe { File::from_raw_file(file) },
-                &mut iter,
-                offset.try_into()?,
-            )?;
-            unsafe { (*iocb).ki_pos += bindings::loff_t::try_from(read).unwrap() };
-            Ok(read as _)
-        })
-    }
-
     unsafe extern "C" fn write_callback(
         file: *mut bindings::file,
         buf: *const core::ffi::c_char,
@@ -680,8 +650,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         offset: *mut bindings::loff_t,
     ) -> core::ffi::c_ssize_t {
         from_result(|| {
-            let mut data =
-                unsafe { UserSlicePtr::new(buf as *mut core::ffi::c_void, len).reader() };
+            let mut data = UserSlice::new(buf as _, len).reader();
             // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
             // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
             // `release` callback, which the C API guarantees that will be called only when all
@@ -697,31 +666,6 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
                 unsafe { *offset }.try_into()?,
             )?;
             unsafe { (*offset) += bindings::loff_t::try_from(written).unwrap() };
-            Ok(written as _)
-        })
-    }
-
-    unsafe extern "C" fn write_iter_callback(
-        iocb: *mut bindings::kiocb,
-        raw_iter: *mut bindings::iov_iter,
-    ) -> isize {
-        from_result(|| {
-            let mut iter = unsafe { IovIter::from_ptr(raw_iter) };
-            let file = unsafe { (*iocb).ki_filp };
-            let offset = unsafe { (*iocb).ki_pos };
-            // SAFETY: `private_data` was initialised by `open_callback` with a value returned by
-            // `T::Data::into_foreign`. `T::Data::from_foreign` is only called by the
-            // `release` callback, which the C API guarantees that will be called only when all
-            // references to `file` have been released, so we know it can't be called while this
-            // function is running.
-            let f = unsafe { T::Data::borrow((*file).private_data) };
-            let written = T::write(
-                f,
-                unsafe { File::from_raw_file(file) },
-                &mut iter,
-                offset.try_into()?,
-            )?;
-            unsafe { (*iocb).ki_pos += bindings::loff_t::try_from(written).unwrap() };
             Ok(written as _)
         })
     }
@@ -914,11 +858,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         } else {
             None
         },
-        read_iter: if T::HAS_READ {
-            Some(Self::read_iter_callback)
-        } else {
-            None
-        },
+        read_iter: None,
         remap_file_range: None,
         setlease: None,
         show_fdinfo: None,
@@ -931,11 +871,7 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
         },
         uring_cmd: None,
         uring_cmd_iopoll: None,
-        write_iter: if T::HAS_WRITE {
-            Some(Self::write_iter_callback)
-        } else {
-            None
-        },
+        write_iter: None,
         fop_flags: 0,
         splice_eof: None,
     };
@@ -1002,7 +938,7 @@ pub trait Operations {
     fn read(
         _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
-        _writer: &mut impl IoBufferWriter,
+        _writer: &mut UserSliceWriter,
         _offset: u64,
     ) -> Result<usize> {
         Err(EINVAL)
@@ -1014,7 +950,7 @@ pub trait Operations {
     fn write(
         _data: <Self::Data as ForeignOwnable>::Borrowed<'_>,
         _file: &File,
-        _reader: &mut impl IoBufferReader,
+        _reader: &mut UserSliceReader,
         _offset: u64,
     ) -> Result<usize> {
         Err(EINVAL)
