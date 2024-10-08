@@ -6,6 +6,7 @@ use core::ptr::NonNull;
 
 use crate::{
     error::{code, Error, Result},
+    fs::file,
     str::CStr,
     ThisModule,
 };
@@ -62,7 +63,7 @@ struct RegistrationInner<const N: usize> {
     cdevs: [Option<Cdev>; N],
 }
 
-/// todo
+/// char device registration
 pub struct Registration<const N: usize = 1> {
     name: &'static CStr,
     firstminor: u32,
@@ -82,7 +83,7 @@ impl<const N: usize> Registration<N> {
     }
 
     /// todo
-    pub fn register(&mut self, fops: &'static bindings::file_operations) -> Result {
+    pub fn register<T: file::Operations<OpenData = ()>>(&mut self) -> Result {
         if self.inner.is_none() {
             let mut dev = 0;
             // SAFETY: todo
@@ -111,12 +112,23 @@ impl<const N: usize> Registration<N> {
             return Err(code::EINVAL);
         }
 
-        let mut cdev = Cdev::alloc(fops, self.module)?;
+        // SAFETY: todo
+        let mut cdev = Cdev::alloc(
+            unsafe { file::OperationsVtable::<Self, T>::build() },
+            self.module,
+        )?;
         cdev.add(inner.dev + inner.used as Devt, 1)?;
         inner.cdevs[inner.used] = Some(cdev);
         inner.used += 1;
 
         Ok(())
+    }
+}
+
+impl<const N: usize> file::OpenAdapter<()> for Registration<N> {
+    // SAFETY: only return (), never use
+    unsafe fn convert(_inode: *mut bindings::inode, _file: *mut bindings::file) -> *const () {
+        &()
     }
 }
 
