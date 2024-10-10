@@ -15,6 +15,7 @@
 #include "err.c"
 #include "io.c"
 #include "kunit.c"
+#include "mm.c"
 #include "mutex.c"
 #include "page.c"
 #include "platform.c"
