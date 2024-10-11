@@ -14,10 +14,10 @@
 #![no_std]
 #![feature(coerce_unsized)]
 #![feature(dispatch_from_dyn)]
-#![feature(new_uninit)]
 #![feature(receiver_trait)]
 #![feature(unsize)]
 #![feature(c_size_t)]
+#![feature(box_uninit_write)]
 #![feature(associated_type_defaults)]
 
 // Ensure conditional compilation based on the kernel configuration works;
@@ -47,6 +47,7 @@ pub mod iov_iter;
 pub mod kunit;
 pub mod list;
 pub mod mm;
+pub mod module_param;
 #[cfg(CONFIG_NET)]
 pub mod net;
 pub mod page;
