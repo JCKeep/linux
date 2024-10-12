@@ -148,6 +148,6 @@ impl<const N: usize> Drop for Registration<N> {
 }
 
 // SAFETY: todo
-unsafe impl Sync for Registration {}
+unsafe impl<const N: usize> Sync for Registration<N> {}
 // SAFETY: todo
-unsafe impl Send for Registration {}
+unsafe impl<const N: usize> Send for Registration<N> {}
