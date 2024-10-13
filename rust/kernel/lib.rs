@@ -34,6 +34,7 @@ pub mod block;
 mod build_assert;
 pub mod chrdev;
 pub mod cred;
+pub mod delay;
 pub mod device;
 pub mod error;
 #[cfg(CONFIG_RUST_FW_LOADER_ABSTRACTIONS)]
