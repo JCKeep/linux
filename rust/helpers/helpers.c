@@ -14,6 +14,7 @@
 #include "cred.c"
 #include "err.c"
 #include "fs.c"
+#include "kernel.c"
 #include "kunit.c"
 #include "mm.c"
 #include "mutex.c"

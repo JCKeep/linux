@@ -24,12 +24,7 @@ int rust_helper_wake_up_interruptible(struct wait_queue_head *wq_head)
 	return wake_up_interruptible(wq_head);
 }
 
-void rust_helper_wait_event(struct wait_queue_head *wq_head, bool condition)
+bool rust_helper___wait_is_interruptible(int state)
 {
-	wait_event(*wq_head, condition);
-}
-
-void rust_helper_wait_event_interruptible(struct wait_queue_head *wq_head, bool condition)
-{
-	wait_event_interruptible(*wq_head, condition);
+	return ___wait_is_interruptible(state);
 }
