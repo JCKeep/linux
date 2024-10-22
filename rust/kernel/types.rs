@@ -290,14 +290,10 @@ impl<T> Opaque<T> {
     /// uninitialized. Additionally, access to the inner `T` requires `unsafe`, so the caller needs
     /// to verify at that point that the inner value is valid.
     pub fn ffi_init(init_func: impl FnOnce(*mut T)) -> impl PinInit<Self> {
-        // SAFETY: We contain a `MaybeUninit`, so it is OK for the `init_func` to not fully
-        // initialize the `T`.
-        unsafe {
-            init::pin_init_from_closure::<_, ::core::convert::Infallible>(move |slot| {
-                init_func(Self::raw_get(slot));
-                Ok(())
-            })
-        }
+        Self::try_ffi_init(move |slot| {
+            init_func(slot);
+            Ok(())
+        })
     }
 
     /// Creates a fallible pin-initializer from the given initializer closure.
