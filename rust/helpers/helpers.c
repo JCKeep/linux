@@ -21,6 +21,7 @@
 #include "mm.c"
 #include "mutex.c"
 #include "page.c"
+#include "platform.c"
 #include "pci.c"
 #include "pid_namespace.c"
 #include "rbtree.c"
