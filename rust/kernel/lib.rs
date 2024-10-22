@@ -55,6 +55,7 @@ pub mod list;
 pub mod net;
 pub mod of;
 pub mod page;
+pub mod platform;
 pub mod prelude;
 pub mod print;
 pub mod rbtree;
