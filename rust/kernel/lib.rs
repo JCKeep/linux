@@ -59,6 +59,7 @@ pub mod page;
 pub mod platform;
 pub mod prelude;
 pub mod print;
+pub mod property;
 pub mod rbtree;
 pub mod revocable;
 pub mod sizes;

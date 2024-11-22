@@ -6,6 +6,9 @@
 
 use crate::{
     bindings,
+    error::Result,
+    property::FwProperty,
+    str::CStr,
     types::{ARef, Opaque},
 };
 use core::{fmt, ptr};
@@ -188,6 +191,25 @@ impl Device {
                 &msg as *const _ as *const core::ffi::c_void,
             )
         };
+    }
+
+    /// Returns the firmware property `name` value.
+    pub fn property_read<T: FwProperty>(&self, name: &CStr, default: Option<T>) -> Result<T> {
+        T::read_property(self, name, default)
+    }
+
+    /// Returns the array length for the firmware property `name`.
+    pub fn property_count_elem<T: FwProperty>(&self, name: &CStr) -> Result<usize> {
+        T::count_elem(self, name)
+    }
+
+    /// Returns the index if `match_str` is found in the firmware property array `name`.
+    pub fn property_match_string<T: FwProperty>(
+        &self,
+        name: &CStr,
+        match_str: &CStr,
+    ) -> Result<usize> {
+        T::match_string(self, name, match_str)
     }
 }
 
