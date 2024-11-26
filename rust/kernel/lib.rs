@@ -58,6 +58,7 @@ pub mod mm;
 #[cfg(CONFIG_NET)]
 pub mod net;
 pub mod of;
+pub mod once_lite;
 pub mod page;
 pub mod pid_namespace;
 pub mod platform;
