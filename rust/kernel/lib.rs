@@ -59,8 +59,8 @@ pub mod mm;
 pub mod net;
 pub mod of;
 pub mod page;
-pub mod platform;
 pub mod pid_namespace;
+pub mod platform;
 pub mod prelude;
 pub mod print;
 pub mod rbtree;
@@ -117,13 +117,14 @@ pub trait InPlaceModule: Sync + Send {
     /// It is called when the module is loaded.
     fn init(
         name: &'static str::CStr,
-        module: &'static ThisModule
+        module: &'static ThisModule,
     ) -> impl init::PinInit<Self, error::Error>;
 }
 
 impl<T: Module> InPlaceModule for T {
-    fn init(name: &'static str::CStr,
-        module: &'static ThisModule
+    fn init(
+        name: &'static str::CStr,
+        module: &'static ThisModule,
     ) -> impl init::PinInit<Self, error::Error> {
         let initer = move |slot: *mut Self| {
             let m = <Self as Module>::init(name, module)?;
