@@ -61,6 +61,7 @@ impl UioDeviceOptions {
             }
         }
 
+        // SAFETY: zero initialize, valid
         let mut result: bindings::uio_info = unsafe { MaybeUninit::zeroed().assume_init() };
         result.name = self.name.as_char_ptr();
         result.version = self.version.as_char_ptr();
@@ -130,7 +131,10 @@ pub struct Registration<T> {
     _phantom: PhantomData<T>,
 }
 
+// SAFETY: It is allowed to call `__uio_register_device` on a different thread from where you called
+// `misc_register`.
 unsafe impl<T> Send for Registration<T> {}
+// SAFETY: It is safe to call them in parallel.
 unsafe impl<T> Sync for Registration<T> {}
 
 impl<T: UioDevice> Registration<T> {
@@ -222,6 +226,10 @@ pub trait UioDevice {
     }
 }
 
+/// # Safety
+///
+/// `info` must be a valid `struct uio_info` that is associated with `T`.
+/// `inode` must be the inode for a file that is being released.
 unsafe extern "C" fn uio_open<T: UioDevice>(
     info: *mut bindings::uio_info,
     _inode: *mut bindings::inode,
@@ -241,6 +249,10 @@ unsafe extern "C" fn uio_open<T: UioDevice>(
     0
 }
 
+/// # Safety
+///
+/// `info` must be a valid `struct uio_info` that is associated with `T`.
+/// `inode` must be the inode for a file that is undergoing initialization.
 unsafe extern "C" fn uio_release<T: UioDevice>(
     info: *mut bindings::uio_info,
     _inode: *mut bindings::inode,
@@ -258,6 +270,9 @@ unsafe extern "C" fn uio_release<T: UioDevice>(
     0
 }
 
+/// # Safety
+///
+/// `info` must be a valid `struct uio_info` that is associated with `T`.
 unsafe extern "C" fn uio_irqcontrol<T: UioDevice>(
     info: *mut bindings::uio_info,
     irq_on: ffi::c_int,
@@ -271,11 +286,14 @@ unsafe extern "C" fn uio_irqcontrol<T: UioDevice>(
     let info = unsafe { Info::from_raw(info) };
 
     match T::irqcontrol(device, info, irq_on as _) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(err) => err.to_errno(),
     }
 }
 
+/// # Safety
+///
+/// `info` must be a valid `struct uio_info` that is associated with `T`.
 unsafe extern "C" fn uio_handler<T: UioDevice>(
     irq: ffi::c_int,
     dev_info: *mut bindings::uio_info,
@@ -291,6 +309,10 @@ unsafe extern "C" fn uio_handler<T: UioDevice>(
     T::handler(device, info, irq)
 }
 
+/// # Safety
+///
+/// `info` must be a valid `struct uio_info` that is associated with `T`.
+/// `vma` must be a vma that is currently being mmap'ed with this file.
 unsafe extern "C" fn uio_mmap<T: UioDevice>(
     info: *mut bindings::uio_info,
     vma: *mut bindings::vm_area_struct,
@@ -306,7 +328,7 @@ unsafe extern "C" fn uio_mmap<T: UioDevice>(
     let info = unsafe { Info::from_raw(info) };
 
     match T::mmap(device, info, area) {
-        Ok(_) => 0,
+        Ok(()) => 0,
         Err(err) => err.to_errno(),
     }
 }
