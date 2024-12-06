@@ -245,6 +245,16 @@ where
         Ok(Self::new(x, flags)?.into())
     }
 
+    /// Convert a [`Box<T,A>`] to a [`Pin<Box<T,A>>`]. If `T` does not implement
+    /// [`Unpin`], then `x` will be pinned in memory and can't be moved.
+    pub fn into_pin(boxed: Self) -> Pin<Self> {
+        // SAFETY: `Self` is guaranteed to be the only pointer to the boxed
+        // value. Thus, if `T: !Unpin`, `T` is guaranteed to stay pinned; there
+        // is no way to get rid of the `Pin` and move out of the returned
+        // `Pin<Box<T>>`.
+        unsafe { Pin::new_unchecked(boxed) }
+    }
+
     /// Forgets the contents (does not run the destructor), but keeps the allocation.
     fn forget_contents(this: Self) -> Box<MaybeUninit<T>, A> {
         let ptr = Self::into_raw(this);
