@@ -4,16 +4,15 @@
 //!
 //! C header: [`include/linux/uio_driver.h`](srctree/include/linux/uio_driver.h)
 
-#![allow(dead_code)]
 use core::{marker::PhantomData, mem::MaybeUninit, slice};
 
 use crate::{
-    device,
+    container_of, device,
     error::{to_result, Result, VTABLE_DEFAULT_ERROR},
     ffi,
     mm::virt::VmAreaNew,
     prelude::*,
-    types::{ForeignOwnable, Opaque},
+    types::{ARef, ForeignOwnable, Opaque},
 };
 
 /// Maximum number of memory maps supported by UIO.
@@ -363,6 +362,20 @@ impl Info {
             bindings::uio_event_notify(self.inner.get());
         }
     }
+
+    /// Return `Device` associated with this `Info`
+    ///
+    /// # Safety
+    ///
+    /// `self` must be a valid `Info` associated a valid uio driver.
+    pub unsafe fn get_device(&self) -> Device {
+        // SAFETY: get raw pointer from an `Info` is valid.
+        let udev = unsafe { (*self.inner.get()).uio_dev };
+        // SAFETY: `udev` is valid.
+        let dev = unsafe { device::Device::get_device(&mut (*udev).dev) };
+        // SAFETY: `dev` is valid.
+        unsafe { Device::from_dev(dev) }
+    }
 }
 
 /// IRQ (Interrupt Request) types for UIO.
@@ -398,4 +411,32 @@ pub enum PortType {
     Gpio = bindings::UIO_PORT_GPIO as _,
     /// Other types of port mappings.
     Other = bindings::UIO_PORT_OTHER as _,
+}
+
+/// kernel's `struct uio_device`
+#[derive(Clone)]
+pub struct Device(ARef<device::Device>);
+
+impl Device {
+    /// Convert a raw kernel device into a `Device`
+    ///
+    /// # Safety
+    ///
+    /// `dev` must be an `Aref<device::Device>` whose underlying `bindings::device` is a member of a
+    /// `bindings::uio_device`.
+    pub unsafe fn from_dev(dev: ARef<device::Device>) -> Self {
+        Self(dev)
+    }
+
+    fn as_raw(&self) -> *mut bindings::uio_device {
+        // SAFETY: By the type invariant `self.0.as_raw` is a pointer to the `struct device`
+        // embedded in `struct platform_device`.
+        unsafe { container_of!(self.0.as_raw(), bindings::uio_device, dev) }.cast_mut()
+    }
+}
+
+impl AsRef<device::Device> for Device {
+    fn as_ref(&self) -> &device::Device {
+        &self.0
+    }
 }
