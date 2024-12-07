@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+//! Handle `Arc` timer
 use super::HasTimer;
 use super::RawTimerCallback;
 use super::Timer;
@@ -61,6 +62,14 @@ where
         unsafe { U::start(Arc::as_ptr(&self), expires) };
 
         ArcTimerHandle { inner: self }
+    }
+
+    fn forward(&self, expires: Ktime) {
+        // SAFETY: Since we generate the pointer passed to `start` from a
+        // valid reference, it is a valid pointer.
+        unsafe {
+            U::forward(Arc::as_ptr(self), Ktime::ktime_get(), expires);
+        }
     }
 }
 

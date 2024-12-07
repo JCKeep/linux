@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+//! Handler stack pin timer
 use super::HasTimer;
 use super::RawTimerCallback;
 use super::Timer;
@@ -7,6 +8,7 @@ use super::TimerCallback;
 use super::TimerHandle;
 use super::UnsafeTimerPointer;
 use crate::time::Ktime;
+use core::ops::Deref;
 use core::pin::Pin;
 
 /// A handle for a `Pin<&HasTimer>`. When the handle exists, the timer might be
@@ -65,6 +67,14 @@ where
         unsafe { U::start(self_ptr, expires) };
 
         PinTimerHandle { inner: self }
+    }
+
+    unsafe fn forward(&self, expires: Ktime) {
+        // SAFETY: As we derive `self_ptr` from a reference above, it must point
+        // to a valid `U`.
+        unsafe {
+            U::forward(self.deref(), Ktime::ktime_get(), expires);
+        }
     }
 }
 

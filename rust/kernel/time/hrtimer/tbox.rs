@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+//! Handler `Box` timer
 use super::HasTimer;
 use super::RawTimerCallback;
 use super::Timer;
@@ -9,6 +10,7 @@ use super::TimerPointer;
 use crate::prelude::*;
 use crate::time::Ktime;
 use core::mem::ManuallyDrop;
+use core::ops::Deref;
 
 /// A handle for a `Box<HasTimer<U>>` returned by a call to
 /// [`TimerPointer::start`].
@@ -75,6 +77,14 @@ where
         BoxTimerHandle {
             inner: Box::into_raw(inner),
             _p: core::marker::PhantomData,
+        }
+    }
+
+    fn forward(&self, expires: Ktime) {
+        // SAFETY: Since we generate the pointer passed to `start` from a valid
+        // reference, it is a valid pointer.
+        unsafe {
+            U::forward(self.deref(), Ktime::ktime_get(), expires);
         }
     }
 }

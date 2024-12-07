@@ -143,6 +143,9 @@ pub trait TimerPointer: Sync + Sized {
     /// Start the timer with expiry after `expires` time units. If the timer was
     /// already running, it is restarted with the new expiry time.
     fn start(self, expires: Ktime) -> Self::TimerHandle;
+
+    /// forward timer expiry
+    fn forward(&self, expires: Ktime);
 }
 
 /// Unsafe version of [`TimerPointer`] for situations where leaking the
@@ -176,6 +179,13 @@ pub unsafe trait UnsafeTimerPointer: Sync + Sized {
     /// Caller promises keep the timer structure alive until the timer is dead.
     /// Caller can ensure this by not leaking the returned `Self::TimerHandle`.
     unsafe fn start(self, expires: Ktime) -> Self::TimerHandle;
+
+    /// forward timer expiry
+    /// 
+    /// # Safety
+    /// 
+    /// Caller promises keep the timer structure alive until the timer is dead.
+    unsafe fn forward(&self, expires: Ktime);
 }
 
 /// A trait for stack allocated timers.
@@ -326,6 +336,22 @@ pub unsafe trait HasTimer<U> {
                 expires.to_ns(),
                 0,
                 (*Self::raw_get_timer(self_ptr)).mode.into(),
+            );
+        }
+    }
+
+    /// Forward the timer expiry
+    ///
+    /// # Safety
+    ///
+    /// `self_ptr` must point to a valid `Self`.
+    unsafe fn forward(self_ptr: *const Self, now: Ktime, expires: Ktime) {
+        // SAFETY: todo
+        unsafe {
+            let _ = bindings::hrtimer_forward(
+                Self::c_timer_ptr(self_ptr).cast_mut(),
+                now.to_ns(),
+                expires.to_ns(),
             );
         }
     }
@@ -513,7 +539,7 @@ macro_rules! impl_has_timer {
 
             #[inline]
             unsafe fn raw_get_timer(ptr: *const Self) ->
-                *const $crate::::time::hrtimer::Timer<$timer_type>
+                *const $crate::time::hrtimer::Timer<$timer_type>
             {
                 // SAFETY: The caller promises that the pointer is not dangling.
                 unsafe {
@@ -525,8 +551,8 @@ macro_rules! impl_has_timer {
 }
 
 // `box` is a reserved keyword, so prefix with `t` for timer
-mod tbox;
+pub mod tbox;
 
-mod arc;
-mod pin;
-mod pin_mut;
+pub mod arc;
+pub mod pin;
+pub mod pin_mut;
