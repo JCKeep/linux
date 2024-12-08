@@ -17,3 +17,8 @@ void rust_helper_kunmap_local(const void *addr)
 {
 	kunmap_local(addr);
 }
+
+unsigned long rust_helper_virt_to_phys(const void *kaddr)
+{
+	return virt_to_phys(kaddr);
+}

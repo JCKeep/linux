@@ -56,6 +56,12 @@ impl VmAreaRef {
         unsafe { (*self.as_ptr()).__bindgen_anon_2.vm_flags as _ }
     }
 
+    /// TODO
+    pub fn pgprot(&self) -> pgprot_t {
+        // SAFETY: todo
+        unsafe { (*self.as_ptr()).vm_page_prot }
+    }
+
     /// Returns the (inclusive) start address of the virtual memory area.
     #[inline]
     pub fn start(&self) -> usize {
@@ -338,11 +344,32 @@ impl VmAreaNew {
         unsafe { self.update_flags(0, flags::MAYEXEC) };
         Ok(())
     }
+
+    /// Remap kernel memory to userspace
+    #[inline]
+    pub fn remap_pfn_range(&self, address: usize) -> Result {
+        // SAFETY: todo
+        let phys_addr = unsafe { bindings::virt_to_phys(address as _) };
+
+        // SAFETY: todo
+        to_result(unsafe {
+            bindings::remap_pfn_range(
+                self.as_ptr(),
+                self.start() as _,
+                phys_addr,
+                (self.end() - self.start()) as _,
+                self.pgprot(),
+            )
+        })
+    }
 }
 
 /// The integer type used for vma flags.
 #[doc(inline)]
 pub use bindings::vm_flags_t;
+/// TODO
+#[doc(inline)]
+pub use bindings::pgprot_t;
 
 /// All possible flags for [`VmAreaRef`].
 pub mod flags {
