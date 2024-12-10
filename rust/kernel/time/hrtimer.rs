@@ -181,9 +181,9 @@ pub unsafe trait UnsafeTimerPointer: Sync + Sized {
     unsafe fn start(self, expires: Ktime) -> Self::TimerHandle;
 
     /// forward timer expiry
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// Caller promises keep the timer structure alive until the timer is dead.
     unsafe fn forward(&self, expires: Ktime);
 }

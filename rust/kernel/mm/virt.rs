@@ -364,12 +364,12 @@ impl VmAreaNew {
     }
 }
 
-/// The integer type used for vma flags.
-#[doc(inline)]
-pub use bindings::vm_flags_t;
 /// TODO
 #[doc(inline)]
 pub use bindings::pgprot_t;
+/// The integer type used for vma flags.
+#[doc(inline)]
+pub use bindings::vm_flags_t;
 
 /// All possible flags for [`VmAreaRef`].
 pub mod flags {
