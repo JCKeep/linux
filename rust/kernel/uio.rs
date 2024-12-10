@@ -7,7 +7,7 @@
 use core::{marker::PhantomData, mem::MaybeUninit, slice};
 
 use crate::{
-    container_of, device,
+    device,
     error::{to_result, Result, VTABLE_DEFAULT_ERROR},
     ffi,
     mm::virt::VmAreaNew,
@@ -162,9 +162,15 @@ impl<T: UioDevice> Registration<T> {
     }
 
     /// get the uio driver info
-    pub fn as_info(&self) -> &Info {
+    pub fn info(&self) -> &Info {
         // SAFETY: self.uio_info is valid.
         unsafe { &*self.uio_info.get().cast() }
+    }
+
+    /// get uio device
+    pub fn device(&self) -> Device {
+        // SAFETY: only call after register, always valid.
+        unsafe { self.info().get_device() }
     }
 }
 
@@ -426,12 +432,6 @@ impl Device {
     /// `bindings::uio_device`.
     pub unsafe fn from_dev(dev: ARef<device::Device>) -> Self {
         Self(dev)
-    }
-
-    fn as_raw(&self) -> *mut bindings::uio_device {
-        // SAFETY: By the type invariant `self.0.as_raw` is a pointer to the `struct device`
-        // embedded in `struct platform_device`.
-        unsafe { container_of!(self.0.as_raw(), bindings::uio_device, dev) }.cast_mut()
     }
 }
 
