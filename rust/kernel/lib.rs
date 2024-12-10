@@ -80,6 +80,7 @@ pub mod workqueue;
 
 #[doc(hidden)]
 pub use bindings;
+pub mod io;
 pub use macros;
 pub use uapi;
 
