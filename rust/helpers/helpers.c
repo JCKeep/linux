@@ -21,6 +21,7 @@
 #include "page.c"
 #include "pid_namespace.c"
 #include "rbtree.c"
+#include "rcu.c"
 #include "refcount.c"
 #include "security.c"
 #include "signal.c"
