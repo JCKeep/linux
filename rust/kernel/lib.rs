@@ -57,6 +57,7 @@ pub mod miscdevice;
 pub mod mm;
 #[cfg(CONFIG_NET)]
 pub mod net;
+pub mod of;
 pub mod page;
 pub mod pid_namespace;
 pub mod prelude;
