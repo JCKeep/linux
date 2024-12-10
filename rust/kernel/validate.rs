@@ -19,10 +19,11 @@
 //! logic. For example, this is a very bad idea:
 //!
 //! ```
-//! # fn read_bytes_from_network() -> Box<[u8]> {
-//! #     Box::new([1, 0], kernel::alloc::flags::GFP_KERNEL).unwrap()
+//! # use kernel::alloc::{KBox, flags::GFP_KERNEL};
+//! # fn read_bytes_from_network() -> KBox<[u8; 2]> {
+//! #     KBox::new([1, 0], GFP_KERNEL).unwrap()
 //! # }
-//! let bytes: Box<[u8]> = read_bytes_from_network();
+//! let bytes: KBox<[u8; 2]> = read_bytes_from_network();
 //! let data_index = bytes[0];
 //! let data = bytes[usize::from(data_index)];
 //! ```

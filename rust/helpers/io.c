@@ -89,3 +89,8 @@ void rust_helper_writeq_relaxed(u64 value, volatile void __iomem *addr)
 	writeq_relaxed(value, addr);
 }
 #endif
+
+void *rust_helper_ioremap(phys_addr_t addr, size_t size)
+{
+	return ioremap(addr, size);
+}

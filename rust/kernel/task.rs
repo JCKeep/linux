@@ -74,6 +74,7 @@ macro_rules! current {
 /// incremented when creating `State` and decremented when it is dropped:
 ///
 /// ```
+/// use core::ops::Deref;
 /// use kernel::{task::Task, types::ARef};
 ///
 /// struct State {
@@ -84,7 +85,7 @@ macro_rules! current {
 /// impl State {
 ///     fn new() -> Self {
 ///         Self {
-///             creator: current!().into(),
+///             creator: current!().deref().into(),
 ///             index: 0,
 ///         }
 ///     }
