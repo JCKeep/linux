@@ -9,15 +9,14 @@
 //! Reference: <https://www.kernel.org/doc/html/latest/driver-api/misc_devices.html>
 
 use crate::{
-    bindings,
+    bindings, device,
     error::{to_result, Error, Result, VTABLE_DEFAULT_ERROR},
-    device::Device,
     fs::File,
     mm::virt::VmAreaNew,
     prelude::*,
     seq_file::SeqFile,
     str::CStr,
-    types::{ForeignOwnable, Opaque},
+    types::{ARef, ForeignOwnable, Opaque},
 };
 use core::{
     ffi::{c_int, c_long, c_uint, c_ulong},
@@ -90,13 +89,16 @@ impl<T: MiscDevice> MiscDeviceRegistration<T> {
     }
 
     /// Access the `this_device` field.
-    pub fn device(&self) -> &Device {
+    pub fn device(&self) -> Device {
         // SAFETY: This can only be called after a successful register(), which always
         // initialises `this_device` with a valid device. Furthermore, the signature of this
         // function tells the borrow-checker that the `&Device` reference must not outlive the
         // `&MiscDeviceRegistration<T>` used to obtain it, so the last use of the reference must be
         // before the underlying `struct miscdevice` is destroyed.
-        unsafe { Device::as_ref((*self.as_raw()).this_device) }
+        let dev = unsafe { device::Device::from_raw((*self.as_raw()).this_device) };
+
+        // SAFETY: `dev` is a member from `misc_device`
+        unsafe { Device::from_dev(dev) }
     }
 }
 
@@ -359,4 +361,26 @@ unsafe extern "C" fn fops_show_fdinfo<T: MiscDevice>(
     let m = unsafe { SeqFile::from_raw(seq_file) };
 
     T::show_fdinfo(device, m, file);
+}
+
+/// kernel's `struct misc_device`
+#[derive(Clone)]
+pub struct Device(ARef<device::Device>);
+
+impl Device {
+    /// Convert a raw kernel device into a `Device`
+    ///
+    /// # Safety
+    ///
+    /// `dev` must be an `Aref<device::Device>` whose underlying `bindings::device` is a member of a
+    /// `bindings::misc_device`.
+    pub unsafe fn from_dev(dev: ARef<device::Device>) -> Self {
+        Self(dev)
+    }
+}
+
+impl AsRef<device::Device> for Device {
+    fn as_ref(&self) -> &device::Device {
+        &self.0
+    }
 }
