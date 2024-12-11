@@ -16,3 +16,8 @@ resource_size_t rust_helper_pci_resource_len(struct pci_dev *pdev, int bar)
 {
         return pci_resource_len(pdev, bar);
 }
+
+resource_size_t rust_helper_pci_resource_start(struct pci_dev *pdev, int bar)
+{
+        return pci_resource_start(pdev, bar);
+}

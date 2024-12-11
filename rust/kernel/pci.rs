@@ -148,6 +148,20 @@ impl DeviceId {
             override_only: 0,
         })
     }
+
+    /// PCI_DEVICE_SUB macro.
+    pub const fn with_sub(vendor: u32, device: u32, subvendor: u32, subdevice: u32) -> Self {
+        Self(bindings::pci_device_id {
+            vendor,
+            device,
+            subvendor,
+            subdevice,
+            class: 0,
+            class_mask: 0,
+            driver_data: 0,
+            override_only: 0,
+        })
+    }
 }
 
 // Allow drivers R/O access to the fields of `pci_device_id`; should we prefer accessor functions
@@ -383,6 +397,24 @@ impl Device {
         unsafe { (*self.as_raw()).device }
     }
 
+    /// Returns the PCI vendor ID.
+    pub fn sub_vendor_id(&self) -> u16 {
+        // SAFETY: `self.as_raw` is a valid pointer to a `struct pci_dev`.
+        unsafe { (*self.as_raw()).subsystem_vendor }
+    }
+
+    /// Returns the PCI device ID.
+    pub fn sub_device_id(&self) -> u16 {
+        // SAFETY: `self.as_raw` is a valid pointer to a `struct pci_dev`.
+        unsafe { (*self.as_raw()).subsystem_device }
+    }
+
+    /// Returns the PCI irq
+    pub fn irq(&self) -> u32 {
+        // SAFETY: `self.as_raw` is a valid pointer to a `struct pci_dev`.
+        unsafe { (*self.as_raw()).irq }
+    }
+
     /// Enable memory resources for this device.
     pub fn enable_device_mem(&self) -> Result {
         // SAFETY: `self.as_raw` is guaranteed to be a pointer to a valid `struct pci_dev`.
@@ -410,6 +442,18 @@ impl Device {
         // - `bar` is a valid bar number, as guaranteed by the above call to `Bar::index_is_valid`,
         // - by its type invariant `self.as_raw` is always a valid pointer to a `struct pci_dev`.
         Ok(unsafe { bindings::pci_resource_len(self.as_raw(), bar.try_into()?) })
+    }
+
+    /// Returns the size of the given PCI bar resource.
+    pub fn resource_start(&self, bar: u32) -> Result<bindings::resource_size_t> {
+        if !Bar::index_is_valid(bar) {
+            return Err(EINVAL);
+        }
+
+        // SAFETY:
+        // - `bar` is a valid bar number, as guaranteed by the above call to `Bar::index_is_valid`,
+        // - by its type invariant `self.as_raw` is always a valid pointer to a `struct pci_dev`.
+        Ok(unsafe { bindings::pci_resource_start(self.as_raw(), bar.try_into()?) })
     }
 
     /// Mapps an entire PCI-BAR after performing a region-request on it. I/O operation bound checks

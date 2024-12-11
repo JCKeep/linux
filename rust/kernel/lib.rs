@@ -49,6 +49,7 @@ pub mod firmware;
 pub mod fs;
 pub mod init;
 pub mod ioctl;
+pub mod irq;
 pub mod jump_label;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
@@ -79,6 +80,8 @@ pub mod tracepoint;
 pub mod transmute;
 pub mod types;
 pub mod uaccess;
+#[cfg(CONFIG_UIO)]
+pub mod uio;
 pub mod workqueue;
 
 #[doc(hidden)]

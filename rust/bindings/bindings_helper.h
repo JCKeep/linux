@@ -16,6 +16,7 @@
 #include <linux/file.h>
 #include <linux/firmware.h>
 #include <linux/fs.h>
+#include <linux/irqreturn.h>
 #include <linux/jiffies.h>
 #include <linux/jump_label.h>
 #include <linux/mdio.h>
@@ -31,6 +32,7 @@
 #include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/tracepoint.h>
+#include <linux/uio_driver.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include <trace/events/rust_sample.h>
