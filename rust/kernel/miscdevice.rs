@@ -11,19 +11,16 @@
 use crate::{
     bindings, device,
     error::{to_result, Error, Result, VTABLE_DEFAULT_ERROR},
+    ffi::{c_char, c_int, c_long, c_uint, c_ulong},
     fs::File,
     mm::virt::VmAreaNew,
     prelude::*,
     seq_file::SeqFile,
     str::CStr,
     types::{ARef, ForeignOwnable, Opaque},
+    uaccess::{UserSlice, UserSliceReader, UserSliceWriter},
 };
-use core::{
-    ffi::{c_int, c_long, c_uint, c_ulong},
-    marker::PhantomData,
-    mem::MaybeUninit,
-    pin::Pin,
-};
+use core::{marker::PhantomData, mem::MaybeUninit, pin::Pin};
 
 /// Options for creating a misc device.
 #[derive(Copy, Clone)]
@@ -126,6 +123,24 @@ pub trait MiscDevice: Sized {
         drop(device);
     }
 
+    /// Read
+    fn read(
+        _device: <Self::Ptr as ForeignOwnable>::Borrowed<'_>,
+        _writer: UserSliceWriter,
+        offset: u64,
+    ) -> Result<usize> {
+        kernel::build_error!(VTABLE_DEFAULT_ERROR)
+    }
+
+    /// Write
+    fn write(
+        _device: <Self::Ptr as ForeignOwnable>::Borrowed<'_>,
+        _reader: UserSliceReader,
+        offset: u64,
+    ) -> Result<usize> {
+        kernel::build_error!(VTABLE_DEFAULT_ERROR)
+    }
+
     /// Handle for mmap.
     fn mmap(_device: <Self::Ptr as ForeignOwnable>::Borrowed<'_>, _vma: &VmAreaNew) -> Result {
         kernel::build_error!(VTABLE_DEFAULT_ERROR)
@@ -188,6 +203,8 @@ const fn create_vtable<T: MiscDevice>() -> &'static bindings::file_operations {
         const VTABLE: bindings::file_operations = bindings::file_operations {
             open: Some(fops_open::<T>),
             release: Some(fops_release::<T>),
+            read: maybe_fn(T::HAS_READ, fops_read::<T>),
+            write: maybe_fn(T::HAS_WRITE, fops_write::<T>),
             mmap: maybe_fn(T::HAS_MMAP, fops_mmap::<T>),
             unlocked_ioctl: maybe_fn(T::HAS_IOCTL, fops_ioctl::<T>),
             #[cfg(CONFIG_COMPAT)]
@@ -268,6 +285,62 @@ unsafe extern "C" fn fops_release<T: MiscDevice>(
     T::release(ptr, unsafe { File::from_raw_file(file) });
 
     0
+}
+
+/// # Safety
+///
+/// `file` must be a valid file that is associated with a `MiscDeviceRegistration<T>`.
+unsafe extern "C" fn fops_read<T: MiscDevice>(
+    file: *mut bindings::file,
+    buf: *mut c_char,
+    len: usize,
+    offset: *mut bindings::loff_t,
+) -> isize {
+    // SAFETY: The mmap call of a file can access the private data.
+    let private = unsafe { (*file).private_data };
+    // SAFETY: Mmap calls can borrow the private data of the file.
+    let device = unsafe { <T::Ptr as ForeignOwnable>::borrow(private) };
+    let writer = UserSlice::new(buf as _, len as _).writer();
+
+    // SAFETY: todo
+    match T::read(device, writer, unsafe { (*offset) as _ }) {
+        Ok(off) => {
+            // SAFETY: todo
+            unsafe {
+                (*offset) += off as bindings::loff_t;
+            }
+            off as _
+        }
+        Err(err) => err.to_errno() as isize,
+    }
+}
+
+/// # Safety
+///
+/// `file` must be a valid file that is associated with a `MiscDeviceRegistration<T>`.
+unsafe extern "C" fn fops_write<T: MiscDevice>(
+    file: *mut bindings::file,
+    buf: *const c_char,
+    len: usize,
+    offset: *mut bindings::loff_t,
+) -> isize {
+    // SAFETY: The mmap call of a file can access the private data.
+    let private = unsafe { (*file).private_data };
+    // SAFETY: Mmap calls can borrow the private data of the file.
+    let device = unsafe { <T::Ptr as ForeignOwnable>::borrow(private) };
+    let reader = UserSlice::new(buf as _, len as _).reader();
+
+    // SAFETY: todo
+    match T::write(device, reader, unsafe { (*offset) as _ }) {
+        Ok(off) => {
+            // SAFETY: todo
+            unsafe {
+                (*offset) += off as bindings::loff_t;
+            }
+            off as _
+        }
+        Err(err) => err.to_errno() as isize,
+    }
 }
 
 /// # Safety
