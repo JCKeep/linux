@@ -191,6 +191,15 @@ impl<T: ?Sized> Untrusted<T> {
         }
     }
 
+    /// Sets the underlying untrusted value with `func`
+    pub fn write_with<Data>(&mut self, func: impl Fn(&mut Data)) {
+        let ptr: *mut T = &mut self.0 .0;
+        let ptr: *mut Data = ptr.cast();
+
+        // SAFETY: todo
+        func(unsafe { &mut *ptr })
+    }
+
     /// Turns a slice of untrusted values into an untrusted slice of values.
     pub fn transpose_slice(slice: &[Untrusted<T>]) -> &Untrusted<[T]>
     where
@@ -200,6 +209,17 @@ impl<T: ?Sized> Untrusted<T> {
         // SAFETY: `ptr` and `len` come from the same slice reference.
         let slice = unsafe { slice::from_raw_parts(ptr, slice.len()) };
         Untrusted::new_ref(slice)
+    }
+
+    /// Turns a slice of untrusted values into an untrusted slice of values.
+    pub fn transpose_slice_mut(slice: &mut [Untrusted<T>]) -> &mut Untrusted<[T]>
+    where
+        T: Sized,
+    {
+        let ptr = slice.as_mut_ptr().cast::<T>();
+        // SAFETY: `ptr` and `len` come from the same slice reference.
+        let slice = unsafe { slice::from_raw_parts_mut(ptr, slice.len()) };
+        Untrusted::new_mut(slice)
     }
 
     /// Turns a slice of uninitialized, untrusted values into an untrusted slice of uninitialized
