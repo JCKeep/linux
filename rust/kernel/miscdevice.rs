@@ -304,32 +304,6 @@ unsafe extern "C" fn fops_mmap<T: MiscDevice>(
 /// # Safety
 ///
 /// `file` must be a valid file that is associated with a `MiscDeviceRegistration<T>`.
-/// `vma` must be a vma that is currently being mmap'ed with this file.
-unsafe extern "C" fn fops_mmap<T: MiscDevice>(
-    file: *mut bindings::file,
-    vma: *mut bindings::vm_area_struct,
-) -> c_int {
-    // SAFETY: The mmap call of a file can access the private data.
-    let private = unsafe { (*file).private_data };
-    // SAFETY: This is a Rust Miscdevice, so we call `into_foreign` in `open` and `from_foreign` in
-    // `release`, and `fops_mmap` is guaranteed to be called between those two operations.
-    let device = unsafe { <T::Ptr as ForeignOwnable>::borrow(private) };
-    // SAFETY: The caller provides a vma that is undergoing initial VMA setup.
-    let area = unsafe { VmAreaNew::from_raw(vma) };
-    // SAFETY:
-    // * The file is valid for the duration of this call.
-    // * There is no active fdget_pos region on the file on this thread.
-    let file = unsafe { File::from_raw_file(file) };
-
-    match T::mmap(device, file, area) {
-        Ok(()) => 0,
-        Err(err) => err.to_errno() as c_int,
-    }
-}
-
-/// # Safety
-///
-/// `file` must be a valid file that is associated with a `MiscDeviceRegistration<T>`.
 unsafe extern "C" fn fops_ioctl<T: MiscDevice>(
     file: *mut bindings::file,
     cmd: c_uint,
