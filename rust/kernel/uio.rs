@@ -42,7 +42,7 @@ impl UioDeviceOptions {
         Self {
             name,
             version,
-            irq: irq::UIO_IRQ_NONE,
+            irq: irq_flags::UIO_IRQ_NONE,
             irq_flags: 0,
             mem: [const { UioDeviceMemOptions::new() }; MAX_UIO_MAPS],
         }
@@ -339,6 +339,7 @@ impl Info {
     }
 
     /// Notifies the kernel that an event has occurred on the UIO device.
+    #[inline]
     pub fn notify(&self) {
         // SAFETY: Only from `Info::from_raw`, which guarantee that `inner` is valid.
         unsafe {
@@ -378,49 +379,13 @@ impl UioDeviceMemOptions {
         unsafe { MaybeUninit::zeroed().assume_init() }
     }
 
-    /// Sets the name of the memory region.
-    ///
-    /// This method assigns a name to the memory region, which can be used to
-    /// identify it in user space.
+    /// setup uio memmap
     #[inline]
-    pub fn set_name(&mut self, name: &CStr) {
+    pub fn setup_mem(&mut self, name: &CStr, addr: usize, size: usize, mem_type: MemType) {
         self.0.name = name.as_char_ptr();
-    }
-
-    /// Sets the address of the memory region.
-    ///
-    /// This method specifies the physical or virtual address of the memory region.
-    #[inline]
-    pub fn set_addr(&mut self, addr: usize) {
         self.0.addr = addr as _;
-    }
-
-    /// Get internal addr
-    #[inline]
-    pub fn internal_addr(&self) -> usize {
-        self.0.internal_addr as _
-    }
-
-    /// Set the internal address
-    #[inline]
-    pub fn set_internal_addr(&mut self, addr: usize) {
-        self.0.internal_addr = addr as _;
-    }
-
-    /// Sets the memory type for the region.
-    ///
-    /// The memory type determines how the memory region is mapped or accessed.
-    #[inline]
-    pub fn set_type(&mut self, ty: MemType) {
-        self.0.memtype = ty as _;
-    }
-
-    /// Sets the size of the memory region.
-    ///
-    /// This method specifies the size of the memory region in bytes.
-    #[inline]
-    pub fn set_size(&mut self, size: usize) {
         self.0.size = size as _;
+        self.0.memtype = mem_type as _;
     }
 
     /// Get mem size
@@ -428,10 +393,32 @@ impl UioDeviceMemOptions {
     pub fn size(&self) -> usize {
         self.0.size as _
     }
+
+    /// Get mem addr
+    #[inline]
+    pub fn addr(&self) -> usize {
+        self.0.addr as _
+    }
+
+    /// Get mem name
+    pub fn name<'a>(&self) -> Option<&'a CStr> {
+        if self.0.name.is_null() {
+            None
+        } else {
+            // SAFETY: a valid string ptr
+            Some(unsafe { CStr::from_char_ptr(self.0.name) })
+        }
+    }
+
+    /// Get mem type
+    #[inline]
+    pub fn mem_type(&self) -> MemType {
+        MemType::from(self.0.memtype)
+    }
 }
 
 /// IRQ (Interrupt Request) types for UIO.
-pub mod irq {
+pub mod irq_flags {
     /// A custom IRQ type defined by the driver.
     /// Used when the interrupt mechanism does not conform to standard types.
     pub const UIO_IRQ_CUSTOM: crate::ffi::c_int = bindings::UIO_IRQ_CUSTOM as _;
@@ -445,12 +432,22 @@ pub enum MemType {
     None = bindings::UIO_MEM_NONE as _,
     /// Physical memory address mapping.
     Physical = bindings::UIO_MEM_PHYS as _,
-    /// Logical memory address mapping.
+    /// Logical memory address mapping. (e.g. allocated with `__get_free_pages()`
+    /// but not `kmalloc()`)
     Logical = bindings::UIO_MEM_LOGICAL as _,
-    /// Virtual memory address mapping.
+    /// Virtual memory address mapping. (e.g. allcated with `vmalloc()`)
     Virtual = bindings::UIO_MEM_VIRTUAL as _,
-    /// IO virtual address (IOVA) mapping.
-    IoVirtual = bindings::UIO_MEM_IOVA as _,
+}
+
+impl From<ffi::c_int> for MemType {
+    fn from(value: ffi::c_int) -> Self {
+        match value as u32 {
+            bindings::UIO_MEM_PHYS => Self::Physical,
+            bindings::UIO_MEM_LOGICAL => Self::Logical,
+            bindings::UIO_MEM_VIRTUAL => Self::Virtual,
+            _ => Self::None,
+        }
+    }
 }
 
 /// kernel's `struct uio_device`
