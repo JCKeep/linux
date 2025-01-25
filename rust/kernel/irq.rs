@@ -705,3 +705,25 @@ unsafe extern "C" fn irq_flow_handler<T: FlowHandler>(desc: *mut bindings::irq_d
     // outlives the lifetime returned by `from_desc`.
     T::handle_irq_flow(data, &unsafe { Descriptor::from_ptr(desc) });
 }
+
+/// enable handling of an irq
+/// 
+/// # Safety
+/// 
+/// todo
+#[inline]
+pub unsafe fn enable_irq(irq: u32) {
+    // SAFETY: todo
+    unsafe { bindings::enable_irq(irq) };
+}
+
+/// disable an irq without waiting
+/// 
+/// # Safety
+/// 
+/// todo
+#[inline]
+pub unsafe fn disable_irq_nosync(irq: u32) {
+    // SAFETY: todo
+    unsafe { bindings::disable_irq_nosync(irq) };
+}
