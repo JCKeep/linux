@@ -83,7 +83,131 @@ impl UioDeviceOptions {
     }
 }
 
-/// uio registration
+/// A registration of a miscdevice.
+///
+/// # Invariants
+///
+/// `uio_info` is a registered uio device's info.
+/// 
+/// # Example
+/// 
+/// ```no_run
+/// # use kernel::{
+/// #     c_str, new_spinlock,
+/// #     of::{DeviceId, IdTable},
+/// #     page::PAGE_SIZE,
+/// #     platform,
+/// #     prelude::*,
+/// #     sync::{Arc, ArcBorrow, SpinLock},
+/// #     uio::{self, UioDevice, UioDeviceOptions},
+/// # };
+/// const HELLO_WORLD: &[u8] = b"Hello World from uio0\0";
+///
+/// struct SampleDriver {
+///     pdev: platform::Device,
+///     _uio_registration: Pin<KBox<uio::Registration<SimpleUioDriver>>>,
+/// }
+///
+/// type DriverData = VBox<[u8; PAGE_SIZE]>;
+/// struct SimpleUioDriver;
+///
+/// struct Info(u32);
+///
+/// kernel::of_device_table!(
+///     OF_TABLE,
+///     MODULE_OF_TABLE,
+///     <SampleDriver as platform::Driver>::IdInfo,
+///     [(DeviceId::new(c_str!("rust,rust-platform-drv")), Info(42))]
+/// );
+///
+/// impl platform::Driver for SampleDriver {
+///     type IdInfo = Info;
+///     const OF_ID_TABLE: IdTable<Self::IdInfo> = &OF_TABLE;
+///
+///     fn probe(pdev: &mut platform::Device, info: Option<&Self::IdInfo>) -> Result<Pin<KBox<Self>>> {
+///         dev_info!(pdev.as_ref(), "Probe Rust Platform UIO driver sample.\n");
+///
+///         if let Some(info) = info {
+///             dev_info!(
+///                 pdev.as_ref(),
+///                 "Probed by OF compatible match  with info: '{}'.\n",
+///                 info.0
+///             );
+///         }
+///
+///         let dev = pdev.as_ref();
+///         let mut options = UioDeviceOptions::new(c_str!("rust_uio"), c_str!("0.0.1"));
+///
+///         let data = Arc::pin_init(
+///             new_spinlock!(VBox::new([0_u8; PAGE_SIZE], GFP_KERNEL)?),
+///             GFP_KERNEL,
+///         )?;
+///
+///         options.mem[0].setup_mem(
+///             c_str!("asaasa"),
+///             data.lock().as_ptr() as _,
+///             PAGE_SIZE,
+///             uio::MemType::Virtual,
+///         );
+///
+///         let registration = KBox::pin_init(
+///             uio::Registration::register(&THIS_MODULE, dev, options, data),
+///             GFP_KERNEL,
+///         )?;
+///
+///         let drvdata = KBox::new(
+///             Self {
+///                 pdev: pdev.clone(),
+///                 _uio_registration: registration,
+///             },
+///             GFP_KERNEL,
+///         )?;
+///
+///         Ok(drvdata.into())
+///     }
+/// }
+///
+/// impl Drop for SampleDriver {
+///     fn drop(&mut self) {
+///         dev_info!(
+///             self.pdev.as_ref(),
+///             "Remove Rust Platform UIO driver sample.\n"
+///         );
+///     }
+/// }
+///
+/// #[vtable]
+/// impl UioDevice for SimpleUioDriver {
+///     type Data = Arc<SpinLock<DriverData>>;
+///
+///     fn open(info: &uio::Info, data: ArcBorrow<'_, SpinLock<DriverData>>) -> Result {
+///         dev_info!(info.as_dev(), "rust uio device open\n");
+///
+///         // SAFETY: todo
+///         unsafe {
+///             core::ptr::copy_nonoverlapping(
+///                 HELLO_WORLD.as_ptr(),
+///                 data.lock().as_mut_ptr(),
+///                 HELLO_WORLD.len(),
+///             );
+///         }
+///
+///         Ok(())
+///     }
+///
+///     fn release(info: &uio::Info, _data: ArcBorrow<'_, SpinLock<DriverData>>) {
+///         dev_info!(info.as_dev(), "rust uio device close\n");
+///     }
+/// }
+///
+/// kernel::module_platform_driver! {
+///     type: SampleDriver,
+///     name: "rust_uio_driver_platform",
+///     author: "Guangbo Cui",
+///     description: "Rust Platform UIO driver",
+///     license: "GPL v2",
+/// }
+/// ```
 #[pin_data(PinnedDrop)]
 pub struct Registration<T: UioDevice> {
     #[pin]
@@ -152,12 +276,33 @@ impl<T: UioDevice> PinnedDrop for Registration<T> {
     }
 }
 
-/// A trait representing a UIO (Userspace I/O) device.
+/// The UIO device trait.
 ///
 /// This trait provides an interface for implementing UIO device behavior in Rust.
 /// It defines methods for handling device lifecycle events (`open`, `release`) and
 /// optional functionalities such as interrupt handling and memory mapping. Implementors
 /// can customize these methods to suit the specific requirements of their device.
+/// 
+/// # Example
+///
+///```no_run
+/// struct SimpleUioDriver;
+/// type DriverData = VBox<[u8; PAGE_SIZE]>;
+/// 
+/// #[vtable]
+/// impl UioDevice for SimpleUioDriver {
+///     type Data = Arc<SpinLock<DriverData>>;
+///
+///     fn open(info: &uio::Info, _data: ArcBorrow<'_, SpinLock<DriverData>>) -> Result {
+///         dev_info!(info.as_dev(), "rust uio device open\n");
+///         Ok(())
+///     }
+///
+///     fn release(info: &uio::Info, _data: ArcBorrow<'_, SpinLock<DriverData>>) {
+///         dev_info!(info.as_dev(), "rust uio device close\n");
+///     }
+/// }
+///```
 #[vtable]
 pub trait UioDevice {
     /// Context data associated with the UIO driver
