@@ -187,7 +187,7 @@ impl Resource {
     pub fn flags(&self) -> Flags {
         let inner = self.0.get();
         // SAFETY: safe as per the invariants of `Resource`
-        let flags = unsafe { *inner }.flags;
+        let flags = unsafe { *inner }.flags as _;
 
         Flags(flags)
     }
