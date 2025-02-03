@@ -237,7 +237,7 @@ impl<T: Handler> Registration<T> {
                 bindings::request_irq(
                     irq,
                     Some(handle_irq_callback::<T>),
-                    flags.0,
+                    flags.0 as _,
                     name.as_char_ptr(),
                     &*slot as *const _ as *mut core::ffi::c_void,
                 )
@@ -434,7 +434,7 @@ impl<T: ThreadedHandler> ThreadedRegistration<T> {
                     irq,
                     Some(handle_threaded_irq_callback::<T>),
                     Some(thread_fn_callback::<T>),
-                    flags.0,
+                    flags.0 as _,
                     name.as_char_ptr(),
                     slot.cast(),
                 )
