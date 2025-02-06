@@ -118,6 +118,7 @@ macro_rules! define_read {
         /// time, the build will fail.
         $(#[$attr])*
         #[inline]
+        #[cfg(CONFIG_RUST_BUILD_ASSERT_ALLOW)]
         pub fn $name(&self, offset: usize) -> $type_name {
             let addr = self.io_addr_assert::<$type_name>(offset);
 
@@ -147,6 +148,7 @@ macro_rules! define_write {
         /// time, the build will fail.
         $(#[$attr])*
         #[inline]
+        #[cfg(CONFIG_RUST_BUILD_ASSERT_ALLOW)]
         pub fn $name(&self, value: $type_name, offset: usize) {
             let addr = self.io_addr_assert::<$type_name>(offset);
 
