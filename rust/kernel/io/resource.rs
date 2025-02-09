@@ -45,7 +45,7 @@ pub type ResourceSize = u32;
 ///
 /// # Invariants
 /// - `self.0` points to a valid `bindings::resource` that was obtained through
-/// `__request_region`.
+///   `__request_region`.
 pub struct Region(NonNull<bindings::resource>);
 
 impl Deref for Region {

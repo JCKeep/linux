@@ -4,8 +4,10 @@
 //!
 //! C header: [`include/asm-generic/io.h`](srctree/include/asm-generic/io.h)
 
+use crate::bindings;
+#[allow(unused_imports)]
+use crate::build_assert;
 use crate::error::{code::EINVAL, Result};
-use crate::{bindings, build_assert};
 
 pub mod mem;
 pub mod resource;
@@ -217,6 +219,7 @@ impl<const SIZE: usize> Io<SIZE> {
     }
 
     #[inline]
+    #[cfg(CONFIG_RUST_BUILD_ASSERT_ALLOW)]
     fn io_addr_assert<U>(&self, offset: usize) -> usize {
         build_assert!(Self::offset_valid::<U>(offset, SIZE));
 

@@ -260,6 +260,7 @@ impl<T: Handler> Registration<T> {
     }
 
     /// Returns a reference to the handler that was registered with the system.
+    #[allow(clippy::unnecessary_safety_comment)]
     pub fn handler(&self) -> &T {
         // SAFETY: `handler` is initialized in `register`, and we require that
         // T: Sync.
@@ -457,6 +458,7 @@ impl<T: ThreadedHandler> ThreadedRegistration<T> {
     }
 
     /// Returns a reference to the handler that was registered with the system.
+    #[allow(clippy::unnecessary_safety_comment)]
     pub fn handler(&self) -> &T {
         // SAFETY: `handler` is initialized in `register`, and we require that
         // T: Sync.

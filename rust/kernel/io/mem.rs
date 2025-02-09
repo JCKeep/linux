@@ -58,6 +58,7 @@ impl<const SIZE: usize> ExclusiveIoMem<SIZE> {
 impl<const SIZE: usize> Deref for ExclusiveIoMem<SIZE> {
     type Target = Io<SIZE>;
 
+    #[allow(clippy::explicit_auto_deref)]
     fn deref(&self) -> &Self::Target {
         &*self.iomem
     }
