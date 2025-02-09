@@ -66,8 +66,16 @@ impl UioDeviceOptions {
         let mut result: bindings::uio_info = unsafe { MaybeUninit::zeroed().assume_init() };
         result.name = self.name.as_char_ptr();
         result.version = self.version.as_char_ptr();
-        result.irq = self.irq as _;
-        result.irq_flags = self.irq_flags as _;
+
+        if self.irq != irq_flags::UIO_IRQ_NONE
+            && self.irq != irq_flags::UIO_IRQ_CUSTOM
+            && !T::HAS_HANDLER
+        {
+            pr_warn!("Ignore IRQ in `uio::Registration`, not implementing `UioDevice::handler`!\n");
+        } else {
+            result.irq = self.irq as _;
+            result.irq_flags = self.irq_flags as _;
+        }
 
         // SAFETY: kernel `struct uio_mem` and `UioDeviceMemmap` has same memory layout
         result.mem.copy_from_slice(unsafe {
