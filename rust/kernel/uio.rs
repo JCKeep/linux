@@ -19,18 +19,18 @@ use crate::{
 /// Maximum number of memory maps supported by UIO.
 pub const MAX_UIO_MAPS: usize = bindings::MAX_UIO_MAPS as _;
 
-/// Options for configuring a UIO (Userspace I/O) device.
+/// Options for configuring a UIO (Userspace I/O) driver.
 ///
-/// This struct provides the necessary configuration to register a UIO device,
+/// This struct provides the necessary configuration to register a UIO driver,
 /// including its name, version, interrupt settings, and memory maps.
 pub struct UioDeviceOptions {
-    /// device name
+    /// The name of your driver as it will appear in sysfs. 
     pub name: &'static CStr,
-    /// device version
+    /// The version of your driver, appears in `/sys/class/uio/uioX/version`.
     pub version: &'static CStr,
-    /// interrupt
+    /// Interrupt number.
     pub irq: ffi::c_int,
-    /// irq flags
+    /// irq flags pass to the `request_irq()`
     pub irq_flags: usize,
     /// uio memory maps
     pub mem: [UioDeviceMemOptions; MAX_UIO_MAPS],
@@ -110,7 +110,7 @@ unsafe impl<T: UioDevice> Send for Registration<T> {}
 unsafe impl<T: UioDevice> Sync for Registration<T> {}
 
 impl<T: UioDevice> Registration<T> {
-    /// register an uio driver
+    /// Register an uio driver
     pub fn register<'a>(
         module: &'static ThisModule,
         dev: &'a device::Device,
@@ -412,7 +412,14 @@ impl UioDeviceMemOptions {
         unsafe { MaybeUninit::zeroed().assume_init() }
     }
 
-    /// setup uio memmap
+    /// Setup uio memmap
+    /// 
+    /// # Example
+    /// 
+    /// ```no_run
+    /// let mut options = UioDeviceOptions::new(c_str!("test"), c_str!("0.0.1"));
+    /// options.mem[0].setup_mem(None, 0x705a0000, 0x8000, MemType::Physical);
+    /// ```
     pub fn setup_mem(
         &mut self,
         name: Option<&'static CStr>,
