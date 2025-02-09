@@ -2,5 +2,7 @@
 
 //! IRQ abstractions
 
+/// IRQ manager
+pub mod manager;
 /// IRQ allocation and handling
 pub mod request;
