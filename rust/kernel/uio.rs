@@ -29,7 +29,7 @@ pub struct UioDeviceOptions {
     /// device version
     pub version: &'static CStr,
     /// interrupt
-    pub irq: crate::ffi::c_int,
+    pub irq: ffi::c_int,
     /// irq flags
     pub irq_flags: usize,
     /// uio memory maps
@@ -162,13 +162,13 @@ impl<T: UioDevice> PinnedDrop for Registration<T> {
 /// It defines methods for handling device lifecycle events (`open`, `release`) and
 /// optional functionalities such as interrupt handling and memory mapping. Implementors
 /// can customize these methods to suit the specific requirements of their device.
-/// 
+///
 /// # Example
 ///
 ///```no_run
 /// struct SimpleUioDriver;
 /// type DriverData = VBox<[u8; PAGE_SIZE]>;
-/// 
+///
 /// #[vtable]
 /// impl UioDevice for SimpleUioDriver {
 ///     type Data = Arc<SpinLock<DriverData>>;
@@ -332,7 +332,7 @@ unsafe extern "C" fn uio_mmap<T: UioDevice>(
     }
 }
 
-/// Wrapper for the kernel's `struct uio_info`.
+/// UIO device capabilities, wrapper for the kernel's `struct uio_info`.
 #[repr(transparent)]
 pub struct Info {
     inner: Opaque<bindings::uio_info>,
@@ -405,9 +405,16 @@ impl UioDeviceMemOptions {
     }
 
     /// setup uio memmap
-    #[inline]
-    pub fn setup_mem(&mut self, name: &CStr, addr: usize, size: usize, mem_type: MemType) {
-        self.0.name = name.as_char_ptr();
+    pub fn setup_mem(
+        &mut self,
+        name: Option<&'static CStr>,
+        addr: usize,
+        size: usize,
+        mem_type: MemType,
+    ) {
+        if let Some(name) = name {
+            self.0.name = name.as_char_ptr();
+        }
         self.0.addr = addr as _;
         self.0.size = size as _;
         self.0.memtype = mem_type as _;
