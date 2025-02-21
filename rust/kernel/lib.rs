@@ -89,6 +89,7 @@ pub mod uaccess;
 #[cfg(CONFIG_UIO)]
 pub mod uio;
 pub mod workqueue;
+pub mod xarray;
 
 #[doc(hidden)]
 pub use bindings;
