@@ -53,6 +53,7 @@ pub mod init;
 pub mod interrupt;
 pub mod io;
 pub mod ioctl;
+pub mod iov;
 pub mod irq;
 pub mod jump_label;
 #[cfg(CONFIG_KUNIT)]
