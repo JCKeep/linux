@@ -56,6 +56,7 @@ struct kunwind_state {
 	enum kunwind_source source;
 	union unwind_flags flags;
 	struct pt_regs *regs;
+	bool end_on_unreliable;
 };
 
 static __always_inline void
@@ -230,8 +231,26 @@ kunwind_next_frame_record(struct kunwind_state *state)
 	new_fp = READ_ONCE(record->fp);
 	new_pc = READ_ONCE(record->lr);
 
-	if (!new_fp && !new_pc)
-		return kunwind_next_frame_record_meta(state);
+	if (!new_fp && !new_pc) {
+		int ret;
+
+		ret = kunwind_next_frame_record_meta(state);
+		if (ret < 0) {
+			/*
+			 * This covers two different conditions:
+			 *  1. ret == -ENOENT, unwinding is done.
+			 *  2. ret == -EINVAL, unwinding hit error.
+			 */
+			return ret;
+		}
+		/*
+		 * Searching across exception boundaries. The stack is now
+		 * unreliable.
+		 */
+		if (state->end_on_unreliable)
+			return -EINVAL;
+		return 0;
+	}
 
 	unwind_consume_stack(&state->common, info, fp, sizeof(*record));
 
@@ -277,21 +296,24 @@ kunwind_next(struct kunwind_state *state)
 
 typedef bool (*kunwind_consume_fn)(const struct kunwind_state *state, void *cookie);
 
-static __always_inline void
+static __always_inline int
 do_kunwind(struct kunwind_state *state, kunwind_consume_fn consume_state,
 	   void *cookie)
 {
-	if (kunwind_recover_return_address(state))
-		return;
+	int ret;
+
+	ret = kunwind_recover_return_address(state);
+	if (ret)
+		return ret;
 
 	while (1) {
-		int ret;
-
 		if (!consume_state(state, cookie))
-			break;
+			return -EINVAL;
 		ret = kunwind_next(state);
+		if (ret == -ENOENT)
+			return 0;
 		if (ret < 0)
-			break;
+			return ret;
 	}
 }
 
@@ -324,10 +346,10 @@ do_kunwind(struct kunwind_state *state, kunwind_consume_fn consume_state,
 			: stackinfo_get_unknown();		\
 	})
 
-static __always_inline void
+static __always_inline int
 kunwind_stack_walk(kunwind_consume_fn consume_state,
 		   void *cookie, struct task_struct *task,
-		   struct pt_regs *regs)
+		   struct pt_regs *regs, bool end_on_unreliable)
 {
 	struct stack_info stacks[] = {
 		stackinfo_get_task(task),
@@ -348,11 +370,12 @@ kunwind_stack_walk(kunwind_consume_fn consume_state,
 			.stacks = stacks,
 			.nr_stacks = ARRAY_SIZE(stacks),
 		},
+		.end_on_unreliable = end_on_unreliable,
 	};
 
 	if (regs) {
 		if (task != current)
-			return;
+			return -EINVAL;
 		kunwind_init_from_regs(&state, regs);
 	} else if (task == current) {
 		kunwind_init_from_caller(&state);
@@ -360,7 +383,7 @@ kunwind_stack_walk(kunwind_consume_fn consume_state,
 		kunwind_init_from_task(&state, task);
 	}
 
-	do_kunwind(&state, consume_state, cookie);
+	return do_kunwind(&state, consume_state, cookie);
 }
 
 struct kunwind_consume_entry_data {
@@ -384,7 +407,18 @@ noinline noinstr void arch_stack_walk(stack_trace_consume_fn consume_entry,
 		.cookie = cookie,
 	};
 
-	kunwind_stack_walk(arch_kunwind_consume_entry, &data, task, regs);
+	kunwind_stack_walk(arch_kunwind_consume_entry, &data, task, regs, false);
+}
+
+noinline noinstr int arch_stack_walk_reliable(stack_trace_consume_fn consume_entry,
+			void *cookie, struct task_struct *task)
+{
+	struct kunwind_consume_entry_data data = {
+		.consume_entry = consume_entry,
+		.cookie = cookie,
+	};
+
+	return kunwind_stack_walk(arch_kunwind_consume_entry, &data, task, NULL, true);
 }
 
 struct bpf_unwind_consume_entry_data {
@@ -409,7 +443,7 @@ noinline noinstr void arch_bpf_stack_walk(bool (*consume_entry)(void *cookie, u6
 		.cookie = cookie,
 	};
 
-	kunwind_stack_walk(arch_bpf_unwind_consume_entry, &data, current, NULL);
+	kunwind_stack_walk(arch_bpf_unwind_consume_entry, &data, current, NULL, false);
 }
 
 static const char *state_source_string(const struct kunwind_state *state)
@@ -456,7 +490,7 @@ void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk,
 		return;
 
 	printk("%sCall trace:\n", loglvl);
-	kunwind_stack_walk(dump_backtrace_entry, (void *)loglvl, tsk, regs);
+	kunwind_stack_walk(dump_backtrace_entry, (void *)loglvl, tsk, regs, false);
 
 	put_task_stack(tsk);
 }
