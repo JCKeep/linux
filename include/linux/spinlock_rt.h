@@ -151,6 +151,11 @@ static __always_inline void spin_unlock_irqrestore(spinlock_t *lock,
 	__locked;					\
 })
 
+static __always_inline int spin_trylock_irq_disable(spinlock_t *lock)
+{
+	return rt_spin_trylock(lock);
+}
+
 #define spin_is_contended(lock)		(((void)(lock), 0))
 
 static inline int spin_is_locked(spinlock_t *lock)
