@@ -24,7 +24,7 @@ pub const MAX_UIO_MAPS: usize = bindings::MAX_UIO_MAPS as _;
 /// This struct provides the necessary configuration to register a UIO driver,
 /// including its name, version, interrupt settings, and memory maps.
 pub struct UioDeviceOptions {
-    /// The name of your driver as it will appear in sysfs. 
+    /// The name of your driver as it will appear in sysfs.
     pub name: &'static CStr,
     /// The version of your driver, appears in `/sys/class/uio/uioX/version`.
     pub version: &'static CStr,
@@ -127,16 +127,13 @@ impl<T: UioDevice> Registration<T> {
                 // the destructor of this type deallocates the memory.
                 // INVARIANT: If this returns `Ok(())`, then the `slot` will contain a registered
                 // uio device.
-                match to_result(unsafe {
+                to_result(unsafe {
                     bindings::__uio_register_device(module.as_ptr(), dev.as_raw(), slot)
-                }) {
-                    Ok(()) => {
-                        // SAFETY: slot is a valid pointer.
-                        unsafe { (*slot).priv_ = data.into_foreign(); }
-                        Ok(())
-                    },
-                    Err(err) => Err(err),
-                }
+                }).and_then(|()| {
+                    // SAFETY: slot is a valid pointer.
+                    unsafe { (*slot).priv_ = data.into_foreign(); }
+                    Ok(())
+                })
             }),
             _phantom: PhantomData,
         })
@@ -413,9 +410,9 @@ impl UioDeviceMemOptions {
     }
 
     /// Setup uio memmap
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// let mut options = UioDeviceOptions::new(c_str!("test"), c_str!("0.0.1"));
     /// options.mem[0].setup_mem(None, 0x705a0000, 0x8000, MemType::Physical);
