@@ -129,10 +129,9 @@ impl<T: UioDevice> Registration<T> {
                 // uio device.
                 to_result(unsafe {
                     bindings::__uio_register_device(module.as_ptr(), dev.as_raw(), slot)
-                }).and_then(|()| {
+                }).map(|()| {
                     // SAFETY: slot is a valid pointer.
                     unsafe { (*slot).priv_ = data.into_foreign(); }
-                    Ok(())
                 })
             }),
             _phantom: PhantomData,
@@ -417,6 +416,7 @@ impl UioDeviceMemOptions {
     /// let mut options = UioDeviceOptions::new(c_str!("test"), c_str!("0.0.1"));
     /// options.mem[0].setup_mem(None, 0x705a0000, 0x8000, MemType::Physical);
     /// ```
+    #[inline]
     pub fn setup_mem(
         &mut self,
         name: Option<&'static CStr>,
