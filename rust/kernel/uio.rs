@@ -91,7 +91,7 @@ impl UioDeviceOptions {
     }
 }
 
-/// A registration of a miscdevice.
+/// A registration of a uio device
 ///
 /// # Invariants
 ///
