@@ -319,7 +319,7 @@ unsafe extern "C" fn fops_mmap<T: MiscDevice>(
     vma: *mut bindings::vm_area_struct,
 ) -> c_int {
     // SAFETY: The mmap call of a file can access the private data.
-    let private = unsafe { (*file).private_data };
+    let private = unsafe { (*file).private_data.cast() };
     // SAFETY: This is a Rust Miscdevice, so we call `into_foreign` in `open` and `from_foreign` in
     // `release`, and `fops_mmap` is guaranteed to be called between those two operations.
     let device = unsafe { <T::Ptr as ForeignOwnable>::borrow(private) };

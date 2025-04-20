@@ -131,7 +131,7 @@ impl<T: UioDevice> Registration<T> {
                     bindings::__uio_register_device(module.as_ptr(), dev.as_raw(), slot)
                 }).map(|()| {
                     // SAFETY: slot is a valid pointer.
-                    unsafe { (*slot).priv_ = data.into_foreign(); }
+                    unsafe { (*slot).priv_ = data.into_foreign().cast(); }
                 })
             }),
             _phantom: PhantomData,
@@ -149,7 +149,7 @@ impl<T: UioDevice> Registration<T> {
 impl<T: UioDevice> PinnedDrop for Registration<T> {
     fn drop(self: Pin<&mut Self>) {
         // SAFETY: `info` is a valid pointer to a `struct uio_info`.
-        let private = unsafe { (*self.uio_info.get()).priv_ };
+        let private = unsafe { (*self.uio_info.get()).priv_.cast() };
         // SAFETY: The `priv_` field is valid.
         let _data = unsafe { <T::Data as ForeignOwnable>::from_foreign(private) };
 
@@ -239,7 +239,7 @@ unsafe extern "C" fn uio_open<T: UioDevice>(
     _inode: *mut bindings::inode,
 ) -> ffi::c_int {
     // SAFETY: The caller guarantees that `info` is a valid pointer to a `struct uio_info`.
-    let private = unsafe { (*info).priv_ };
+    let private = unsafe { (*info).priv_.cast() };
     // SAFETY: The `priv_` field is expected to point to a valid instance of the type
     // managed by `ForeignOwnable` for `T::Data`. The caller must ensure this invariant.
     let data = unsafe { <T::Data as ForeignOwnable>::borrow(private) };
@@ -261,7 +261,7 @@ unsafe extern "C" fn uio_release<T: UioDevice>(
     _inode: *mut bindings::inode,
 ) -> ffi::c_int {
     // SAFETY: The caller guarantees that `info` is a valid pointer to a `struct uio_info`.
-    let private = unsafe { (*info).priv_ };
+    let private = unsafe { (*info).priv_.cast() };
     // SAFETY: The `priv_` field is expected to point to a valid instance of the type
     // managed by `ForeignOwnable` for `T::Data`. The caller must ensure this invariant.
     let data = unsafe { <T::Data as ForeignOwnable>::borrow(private) };
@@ -281,7 +281,7 @@ unsafe extern "C" fn uio_irqcontrol<T: UioDevice>(
     irq_on: ffi::c_int,
 ) -> ffi::c_int {
     // SAFETY: The caller guarantees that `info` is a valid pointer to a `struct uio_info`.
-    let private = unsafe { (*info).priv_ };
+    let private = unsafe { (*info).priv_.cast() };
     // SAFETY: The `priv_` field is expected to point to a valid instance of the type
     // managed by `ForeignOwnable` for `T::Data`. The caller must ensure this invariant.
     let data = unsafe { <T::Data as ForeignOwnable>::borrow(private) };
@@ -302,7 +302,7 @@ unsafe extern "C" fn uio_handler<T: UioDevice>(
     dev_info: *mut bindings::uio_info,
 ) -> bindings::irqreturn_t {
     // SAFETY: The caller guarantees that `info` is a valid pointer to a `struct uio_info`.
-    let private = unsafe { (*dev_info).priv_ };
+    let private = unsafe { (*dev_info).priv_.cast() };
     // SAFETY: The `priv_` field is expected to point to a valid instance of the type
     // managed by `ForeignOwnable` for `T::Data`. The caller must ensure this invariant.
     let data = unsafe { <T::Data as ForeignOwnable>::borrow(private) };
@@ -321,7 +321,7 @@ unsafe extern "C" fn uio_mmap<T: UioDevice>(
     vma: *mut bindings::vm_area_struct,
 ) -> ffi::c_int {
     // SAFETY: The caller guarantees that `info` is a valid pointer to a `struct uio_info`.
-    let private = unsafe { (*info).priv_ };
+    let private = unsafe { (*info).priv_.cast() };
     // SAFETY: The `priv_` field is expected to point to a valid instance of the type
     // managed by `ForeignOwnable` for `T::Data`. The caller must ensure this invariant.
     let data = unsafe { <T::Data as ForeignOwnable>::borrow(private) };

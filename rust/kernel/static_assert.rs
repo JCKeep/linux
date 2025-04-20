@@ -24,11 +24,11 @@
 /// const fn f(x: i32) -> i32 {
 ///     x + 2
 /// }
-/// static_assert!(f(40) == 42);
+/// static_assert!(f(40) == 42, "f(x) must add 2 to the given input.");
 /// ```
 #[macro_export]
 macro_rules! static_assert {
-    ($condition:expr) => {
-        const _: () = core::assert!($condition);
+    ($condition:expr $(,$arg:literal)?) => {
+        const _: () = core::assert!($condition $(,$arg)?);
     };
 }

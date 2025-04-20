@@ -174,7 +174,7 @@ pub struct StoreError<T> {
 
 impl<T> From<StoreError<T>> for Error {
     fn from(value: StoreError<T>) -> Self {
-        self.error
+        value.error
     }
 }
 
