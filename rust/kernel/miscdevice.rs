@@ -229,7 +229,7 @@ impl<'a, T: ForeignOwnable> Kiocb<'a, T> {
     /// Get the private data in this kiocb.
     pub fn private_data(&self) -> <T as ForeignOwnable>::Borrowed<'a> {
         // SAFETY: The `kiocb` lets us access the private data.
-        let private = unsafe { (*(*self.inner.as_ptr()).ki_filp).private_data };
+        let private = unsafe { (*(*self.inner.as_ptr()).ki_filp).private_data.cast() };
         // SAFETY: The kiocb has shared access to the private data.
         unsafe { <T as ForeignOwnable>::borrow(private) }
     }
@@ -264,12 +264,12 @@ const fn create_vtable<T: MiscDevice>() -> &'static bindings::file_operations {
             open: Some(fops_open::<T>),
             release: Some(fops_release::<T>),
             read_iter: if T::HAS_READ_ITER {
-                Some(Self::read_iter)
+                Some(read_iter::<T>)
             } else {
                 None
             },
             write_iter: if T::HAS_WRITE_ITER {
-                Some(Self::write_iter)
+                Some(write_iter::<T>)
             } else {
                 None
             },
@@ -365,7 +365,7 @@ unsafe extern "C" fn fops_release<T: MiscDevice>(
 ///
 /// `kiocb` must be correspond to a valid file that is associated with a
 /// `MiscDeviceRegistration<T>`. `iter` must be a valid `struct iov_iter` for writing.
-unsafe extern "C" fn read_iter(
+unsafe extern "C" fn read_iter<T: MiscDevice>(
     kiocb: *mut bindings::kiocb,
     iter: *mut bindings::iov_iter,
 ) -> isize {
@@ -387,7 +387,7 @@ unsafe extern "C" fn read_iter(
 ///
 /// `kiocb` must be correspond to a valid file that is associated with a
 /// `MiscDeviceRegistration<T>`. `iter` must be a valid `struct iov_iter` for writing.
-unsafe extern "C" fn write_iter(
+unsafe extern "C" fn write_iter<T: MiscDevice>(
     kiocb: *mut bindings::kiocb,
     iter: *mut bindings::iov_iter,
 ) -> isize {
