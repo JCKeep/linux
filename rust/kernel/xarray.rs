@@ -275,3 +275,66 @@ unsafe impl<T: ForeignOwnable + Send> Send for XArray<T> {}
 // SAFETY: `XArray<T>` serialises the interior mutability it provides so it is `Sync` iff `T` is
 // `Send`.
 unsafe impl<T: ForeignOwnable + Send> Sync for XArray<T> {}
+
+/// A raw value stored in an [`XArray`].
+#[repr(transparent)]
+#[derive(Copy, Clone, Default)]
+pub struct XValue {
+    xa_value: usize,
+}
+
+impl XValue {
+    /// return the raw value of the XValue
+    #[inline]
+    pub fn value(&self) -> usize {
+        self.xa_value >> 0x1
+    }
+
+    /// construct an XValue from a raw value
+    #[inline]
+    pub fn from_value(value: usize) -> Self {
+        Self {
+            xa_value: (value << 0x1) | 0x1,
+        }
+    }
+}
+
+macro_rules! impl_frombytes {
+    ($($t:ty, )*) => {
+        $(impl From<$t> for XValue {
+            fn from(value: $t) -> Self {
+                Self::from_value(value as _)
+            }
+        })*
+    };
+}
+
+impl_frombytes!{
+    i8, i16, i32, i64, isize,
+    u8, u16, u32, u64, usize,
+}
+
+// SAFETY: `XValue` is a wrapper around a `usize` and aligned to a raw pointer.
+unsafe impl ForeignOwnable for XValue {
+    type PointedTo = XValue;
+
+    type Borrowed<'a> = XValue;
+
+    type BorrowedMut<'a> = XValue;
+
+    fn into_foreign(self) -> *mut Self::PointedTo {
+        self.xa_value as _
+    }
+
+    unsafe fn from_foreign(ptr: *mut Self::PointedTo) -> Self {
+        Self { xa_value: ptr as _ }
+    }
+
+    unsafe fn borrow<'a>(ptr: *mut Self::PointedTo) -> Self::Borrowed<'a> {
+        Self { xa_value: ptr as _ }
+    }
+
+    unsafe fn borrow_mut<'a>(ptr: *mut Self::PointedTo) -> Self::BorrowedMut<'a> {
+        Self { xa_value: ptr as _ }
+    }
+}
