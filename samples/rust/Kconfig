@@ -61,6 +61,17 @@ config SAMPLE_RUST_DRIVER_PLATFORM
 
 	  If unsure, say N.
 
+config SAMPLE_RUST_DRIVER_UIO
+	tristate "Uio Driver"
+	depends on UIO
+	help
+	  This option builds the Rust UIO driver sample.
+
+	  To compile this as a module, choose M here:
+	  the module will be called rust_driver_uio.
+
+	  If unsure, say N.
+
 config SAMPLE_RUST_HOSTPROGS
 	bool "Host programs"
 	help
