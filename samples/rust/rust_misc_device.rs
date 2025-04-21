@@ -94,7 +94,7 @@
 ///   return 0;
 /// }
 /// ```
-use core::pin::Pin;
+use core::{ops::Deref, pin::Pin};
 
 use kernel::{
     c_str,
@@ -106,10 +106,11 @@ use kernel::{
     miscdevice::{Kiocb, MiscDevice, MiscDeviceOptions, MiscDeviceRegistration},
     new_mutex,
     prelude::*,
-    sync::Mutex,
+    sync::{Arc, Mutex},
+    transmute::cast_slice,
     types::ARef,
     uaccess::{UserSlice, UserSliceReader, UserSliceWriter},
-    validate::Untrusted,
+    validate::{Untrusted, Validate},
 };
 
 const RUST_MISC_DEV_HELLO: u32 = _IO('|' as u32, 0x80);
@@ -139,7 +140,7 @@ impl kernel::InPlaceModule for RustMiscDeviceModule {
         };
 
         try_pin_init!(Self {
-            _miscdev <- MiscDeviceRegistration::register(options),
+            _miscdev <- MiscDeviceRegistration::register(options, Arc::new((), GFP_KERNEL)?),
         })
     }
 }
@@ -159,6 +160,7 @@ struct RustMiscDevice {
 #[vtable]
 impl MiscDevice for RustMiscDevice {
     type Ptr = Pin<KBox<Self>>;
+    type RegistrationData = Arc<()>;
 
     fn open(_file: &File, misc: &MiscDeviceRegistration<Self>) -> Result<Pin<KBox<Self>>> {
         let dev = ARef::from(misc.device());
@@ -200,6 +202,12 @@ impl MiscDevice for RustMiscDevice {
         inner.buffer.clear();
         let len = iov.copy_from_iter_vec(&mut inner.buffer, GFP_KERNEL)?;
 
+        let data: UserData<'_> = inner.buffer.validate_ref().inspect_err(|e| {
+            dev_err!(me.dev, "data validate failed: {:?}", e);
+        })?;
+
+        dev_info!(me.dev, "Write data: {}\n", data.to_str().unwrap());
+
         // Set position to zero so that future `read` calls will see the new contents.
         *kiocb.ki_pos_mut() = 0;
 
@@ -229,6 +237,25 @@ impl MiscDevice for RustMiscDevice {
 impl PinnedDrop for RustMiscDevice {
     fn drop(self: Pin<&mut Self>) {
         dev_info!(self.dev, "Exiting the Rust Misc Device Sample\n");
+    }
+}
+struct UserData<'a>(&'a CStr);
+
+impl Deref for UserData<'_> {
+    type Target = CStr;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a> Validate<&'a Untrusted<KVec<u8>>> for UserData<'a> {
+    type Err = kernel::error::Error;
+
+    fn validate(raw: &'a Untrusted<KVec<u8>>) -> Result<Self, Self::Err> {
+        // SAFETY: todo
+        let bytes: &[u8] = unsafe { cast_slice(raw.as_slice()) };
+        Ok(UserData(CStr::from_bytes_with_nul(bytes)?))
     }
 }
 

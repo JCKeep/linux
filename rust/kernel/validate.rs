@@ -112,21 +112,21 @@ impl<T: ?Sized> Untrusted<T> {
     where
         T: Sized,
     {
-        V::validate(self.0)
+        V::validate(self)
     }
 
     /// Validate the underlying untrusted data.
     ///
     /// See the [`Validate`] trait for more information.
     pub fn validate_ref<'a, V: Validate<&'a Self>>(&'a self) -> Result<V, V::Err> {
-        V::validate(&self.0)
+        V::validate(self)
     }
 
     /// Validate the underlying untrusted data.
     ///
     /// See the [`Validate`] trait for more information.
     pub fn validate_mut<'a, V: Validate<&'a mut Self>>(&'a mut self) -> Result<V, V::Err> {
-        V::validate(&mut self.0)
+        V::validate(self)
     }
 }
 
