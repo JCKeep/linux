@@ -15,3 +15,8 @@
 //! - Mixed-size atomic accesses don't cause data races.
 //!
 //! [`LKMM`]: srctree/tools/memory-mode/
+
+pub mod ops;
+pub mod ordering;
+
+pub use ordering::{Acquire, Full, Relaxed, Release};
