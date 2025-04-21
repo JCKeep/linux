@@ -81,7 +81,7 @@ impl<P: ForeignOwnable> Drop for RcuOld<P> {
         // SAFETY: `self.0` is a return value of `P::into_foreign()`, so it's safe to call
         // `from_foreign()` on it. Plus, the above `synchronize_rcu()` guarantees no existing
         // `ForeignOwnable::borrow()` anymore.
-        let p: P = unsafe { P::from_foreign(self.0.as_ptr()) };
+        let p: P = unsafe { P::from_foreign(self.0.as_ptr().cast()) };
         drop(p);
     }
 }
@@ -91,7 +91,7 @@ impl<P: ForeignOwnable> Rcu<P> {
     pub fn new(p: P) -> Self {
         // INVARIANTS: The return value of `p.into_foreign()` is directly stored in the atomic
         // variable.
-        Self(Atomic::new(p.into_foreign()), PhantomData)
+        Self(Atomic::new(p.into_foreign().cast()), PhantomData)
     }
 
     /// Creates a null RCU pointer.
@@ -200,7 +200,7 @@ impl<P: ForeignOwnable> Rcu<P> {
             //                                                    // No `Borrowed` exists now.
             //                                                    from_foreign(...);
             //                                              }
-            Some(unsafe { P::borrow(ptr) })
+            Some(unsafe { P::borrow(ptr.cast()) })
         } else {
             None
         }
@@ -236,7 +236,7 @@ impl<P: ForeignOwnable> Rcu<P> {
             // SAFETY: Per type invariants `old_ptr` has to be a value return by a previous
             // `into_foreign()`, and the exclusive reference `self` guarantees that `from_foreign()`
             // has not been called.
-            unsafe { P::borrow(nonnull.as_ptr()) }
+            unsafe { P::borrow(nonnull.as_ptr().cast()) }
         });
 
         // step 2: COPY, or more generally, initializing `new` based on `old`.
@@ -248,7 +248,7 @@ impl<P: ForeignOwnable> Rcu<P> {
             // Ordering: Pairs with the address dependency in `dereference()` and
             // `read_copy_update()`.
             // INVARIANTS: `new.into_foreign()` is directly store into the atomic variable.
-            self.0.store(new_ptr, Release);
+            self.0.store(new_ptr.cast(), Release);
         } else {
             // Ordering: Setting to a null pointer doesn't need to be Release.
             // INVARIANTS: The atomic variable is set to be null.
@@ -314,7 +314,7 @@ impl<P: ForeignOwnable> Drop for Rcu<P> {
             // SAFETY: `self.0` is a return value of `P::into_foreign()`, so it's safe to call
             // `from_foreign()` on it. Plus, the above `synchronize_rcu()` guarantees no existing
             // `ForeignOwnable::borrow()` anymore.
-            drop(unsafe { P::from_foreign(ptr) });
+            drop(unsafe { P::from_foreign(ptr.cast()) });
         }
     }
 }

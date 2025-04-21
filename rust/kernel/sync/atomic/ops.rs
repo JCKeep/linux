@@ -23,7 +23,7 @@ impl private::Sealed for i64 {}
 ///
 /// - `i32` maps to `atomic_t`.
 /// - `i64` maps to `atomic64_t`.
-pub trait AtomicImpl: Sized  Send  Copy  private::Sealed {}
+pub trait AtomicImpl: Sized + Send + Copy + private::Sealed {}
 
 // `atomic_t` impl atomic operations on `i32`.
 impl AtomicImpl for i32 {}
