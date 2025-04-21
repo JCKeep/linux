@@ -89,6 +89,7 @@ pub mod types;
 pub mod uaccess;
 #[cfg(CONFIG_UIO)]
 pub mod uio;
+pub mod validate;
 pub mod workqueue;
 pub mod xarray;
 
