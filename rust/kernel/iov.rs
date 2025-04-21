@@ -11,7 +11,9 @@ use crate::{
     alloc::{Allocator, Flags},
     bindings,
     prelude::*,
+    transmute::cast_slice_mut,
     types::Opaque,
+    validate::Untrusted,
 };
 use core::{marker::PhantomData, mem::MaybeUninit, slice};
 
@@ -124,10 +126,10 @@ impl<'data> IovIterSource<'data> {
     ///
     /// Returns the number of bytes that have been copied.
     #[inline]
-    pub fn copy_from_iter(&mut self, out: &mut [u8]) -> usize {
-        // SAFETY: We will not write uninitialized bytes to `out`.
-        let out = unsafe { &mut *(out as *mut [u8] as *mut [MaybeUninit<u8>]) };
-
+    pub fn copy_from_iter(&mut self, out: &mut [Untrusted<u8>]) -> usize {
+        // CAST: The call to `copy_from_iter_raw` below only writes initialized values.
+        // SAFETY: `Untrusted<T>` and `MaybeUninit<T>` transparently wrap a `T`.
+        let out: &mut [MaybeUninit<Untrusted<u8>>] = unsafe { cast_slice_mut(out) };
         self.copy_from_iter_raw(out).len()
     }
 
@@ -137,7 +139,7 @@ impl<'data> IovIterSource<'data> {
     #[inline]
     pub fn copy_from_iter_vec<A: Allocator>(
         &mut self,
-        out: &mut Vec<u8, A>,
+        out: &mut Vec<Untrusted<u8>, A>,
         flags: Flags,
     ) -> Result<usize> {
         out.reserve(self.len(), flags)?;
@@ -152,7 +154,10 @@ impl<'data> IovIterSource<'data> {
     /// Returns the sub-slice of the output that has been initialized. If the returned slice is
     /// shorter than the input buffer, then the entire IO vector has been read.
     #[inline]
-    pub fn copy_from_iter_raw(&mut self, out: &mut [MaybeUninit<u8>]) -> &mut [u8] {
+    pub fn copy_from_iter_raw(
+        &mut self,
+        out: &mut [MaybeUninit<Untrusted<u8>>],
+    ) -> &mut [Untrusted<u8>] {
         // SAFETY: `out` is valid for `out.len()` bytes.
         let len =
             unsafe { bindings::_copy_from_iter(out.as_mut_ptr().cast(), out.len(), self.as_raw()) };
@@ -274,7 +279,7 @@ impl<'data> IovIterDest<'data> {
     /// Returns the number of bytes that were written. If this is shorter than the provided slice,
     /// then no more bytes can be written.
     #[inline]
-    pub fn copy_to_iter(&mut self, input: &[u8]) -> usize {
+    pub fn copy_to_iter(&mut self, input: &[Untrusted<u8>]) -> usize {
         // SAFETY: `input` is valid for `input.len()` bytes.
         unsafe { bindings::_copy_to_iter(input.as_ptr().cast(), input.len(), self.as_raw()) }
     }
@@ -286,7 +291,11 @@ impl<'data> IovIterDest<'data> {
     /// that the file will appear to contain `contents` even if takes multiple reads to read the
     /// entire file.
     #[inline]
-    pub fn simple_read_from_buffer(&mut self, ppos: &mut i64, contents: &[u8]) -> Result<usize> {
+    pub fn simple_read_from_buffer(
+        &mut self,
+        ppos: &mut i64,
+        contents: &[Untrusted<u8>],
+    ) -> Result<usize> {
         if *ppos < 0 {
             return Err(EINVAL);
         }

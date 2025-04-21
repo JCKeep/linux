@@ -86,62 +86,6 @@
 ///     return -1;
 ///   }
 ///
-///   value++;
-///
-///   // Set shared value to something different
-///   printf("Submitting new shared value (%d)\n", value);
-///   ret = ioctl(fd, RUST_MISC_DEV_SET_SHARED_VALUE, &value);
-///   if (ret < 0) {
-///     perror("ioctl: Failed to submit new value");
-///     close(fd);
-///     return errno;
-///   }
-///
-///   // Close the device file
-///   printf("Closing /dev/rust-misc-device\n");
-///   close(fd);
-///
-///   // Open the device file again
-///   printf("Opening /dev/rust-misc-device again for reading\n");
-///   fd = open("/dev/rust-misc-device", O_RDWR);
-///   if (fd < 0) {
-///     perror("open");
-///     return errno;
-///   }
-///
-///   // Ensure new value was applied
-///   printf("Fetching new value\n");
-///   ret = ioctl(fd, RUST_MISC_DEV_GET_SHARED_VALUE, &new_value);
-///   if (ret < 0) {
-///     perror("ioctl: Failed to fetch the new value");
-///     close(fd);
-///     return errno;
-///   }
-///
-///   if (value != new_value) {
-///     printf("Failed: Committed and retrieved values are different (%d - %d)\n",
-///            value, new_value);
-///     close(fd);
-///     return -1;
-///   }
-///
-///   value = 0;
-///   // Ensure non-shared value is still 0
-///   printf("Fetching new value\n");
-///   ret = ioctl(fd, RUST_MISC_DEV_GET_VALUE, &new_value);
-///   if (ret < 0) {
-///     perror("ioctl: Failed to fetch the new value");
-///     close(fd);
-///     return errno;
-///   }
-///
-///   if (value != new_value) {
-///     printf("Failed: Committed and retrieved values are different (%d - %d)\n",
-///            value, new_value);
-///     close(fd);
-///     return -1;
-///   }
-///
 ///   // Close the device file
 ///   printf("Closing /dev/rust-misc-device\n");
 ///   close(fd);
@@ -157,19 +101,20 @@ use kernel::{
     device::Device,
     fs::File,
     ioctl::{_IO, _IOC_SIZE, _IOR, _IOW},
-    miscdevice::{MiscDevice, MiscDeviceOptions, MiscDeviceRegistration},
+    iov::{IovIterDest, IovIterSource},
+    kvec,
+    miscdevice::{Kiocb, MiscDevice, MiscDeviceOptions, MiscDeviceRegistration},
     new_mutex,
     prelude::*,
-    sync::{Arc, Mutex},
+    sync::Mutex,
     types::ARef,
     uaccess::{UserSlice, UserSliceReader, UserSliceWriter},
+    validate::Untrusted,
 };
 
 const RUST_MISC_DEV_HELLO: u32 = _IO('|' as u32, 0x80);
 const RUST_MISC_DEV_GET_VALUE: u32 = _IOR::<i32>('|' as u32, 0x81);
 const RUST_MISC_DEV_SET_VALUE: u32 = _IOW::<i32>('|' as u32, 0x82);
-const RUST_MISC_DEV_GET_SHARED_VALUE: u32 = _IOR::<i32>('|' as u32, 0x83);
-const RUST_MISC_DEV_SET_SHARED_VALUE: u32 = _IOW::<i32>('|' as u32, 0x84);
 
 module! {
     type: RustMiscDeviceModule,
@@ -187,38 +132,33 @@ struct RustMiscDeviceModule {
 
 impl kernel::InPlaceModule for RustMiscDeviceModule {
     fn init(_module: &'static ThisModule) -> impl PinInit<Self, Error> {
-        pr_info!("Initializing Rust Misc Device Sample\n");
+        pr_info!("Initialising Rust Misc Device Sample\n");
 
         let options = MiscDeviceOptions {
             name: c_str!("rust-misc-device"),
         };
 
         try_pin_init!(Self {
-            _miscdev <- MiscDeviceRegistration::register(
-                options,
-                Arc::pin_init(new_mutex!(Inner { value: 0_i32 }), GFP_KERNEL)?
-            ),
+            _miscdev <- MiscDeviceRegistration::register(options),
         })
     }
 }
 
 struct Inner {
     value: i32,
+    buffer: Untrusted<KVec<u8>>,
 }
 
 #[pin_data(PinnedDrop)]
 struct RustMiscDevice {
-    shared: Arc<Mutex<Inner>>,
     #[pin]
-    unique: Mutex<Inner>,
+    inner: Mutex<Inner>,
     dev: ARef<Device>,
 }
 
 #[vtable]
 impl MiscDevice for RustMiscDevice {
     type Ptr = Pin<KBox<Self>>;
-
-    type RegistrationData = Arc<Mutex<Inner>>;
 
     fn open(_file: &File, misc: &MiscDeviceRegistration<Self>) -> Result<Pin<KBox<Self>>> {
         let dev = ARef::from(misc.device());
@@ -228,13 +168,42 @@ impl MiscDevice for RustMiscDevice {
         KBox::try_pin_init(
             try_pin_init! {
                 RustMiscDevice {
-                    shared: misc.data().clone(),
-                    unique <- new_mutex!(Inner { value: 0_i32 }),
+                    inner <- new_mutex!(Inner {
+                        value: 0_i32,
+                        buffer: Untrusted::new(kvec![]),
+                    }),
                     dev: dev,
                 }
             },
             GFP_KERNEL,
         )
+    }
+
+    fn read_iter(mut kiocb: Kiocb<'_, Self::Ptr>, iov: &mut IovIterDest<'_>) -> Result<usize> {
+        let me = kiocb.private_data();
+        dev_info!(me.dev, "Reading from Rust Misc Device Sample\n");
+
+        let inner = me.inner.lock();
+        // Read the buffer contents, taking the file position into account.
+        let read = iov.simple_read_from_buffer(kiocb.ki_pos_mut(), &inner.buffer)?;
+
+        Ok(read)
+    }
+
+    fn write_iter(mut kiocb: Kiocb<'_, Self::Ptr>, iov: &mut IovIterSource<'_>) -> Result<usize> {
+        let me = kiocb.private_data();
+        dev_info!(me.dev, "Writing to Rust Misc Device Sample\n");
+
+        let mut inner = me.inner.lock();
+
+        // Replace buffer contents.
+        inner.buffer.clear();
+        let len = iov.copy_from_iter_vec(&mut inner.buffer, GFP_KERNEL)?;
+
+        // Set position to zero so that future `read` calls will see the new contents.
+        *kiocb.ki_pos_mut() = 0;
+
+        Ok(len)
     }
 
     fn ioctl(me: Pin<&RustMiscDevice>, _file: &File, cmd: u32, arg: usize) -> Result<isize> {
@@ -245,12 +214,6 @@ impl MiscDevice for RustMiscDevice {
         match cmd {
             RUST_MISC_DEV_GET_VALUE => me.get_value(UserSlice::new(arg, size).writer())?,
             RUST_MISC_DEV_SET_VALUE => me.set_value(UserSlice::new(arg, size).reader())?,
-            RUST_MISC_DEV_GET_SHARED_VALUE => {
-                me.get_shared_value(UserSlice::new(arg, size).writer())?
-            }
-            RUST_MISC_DEV_SET_SHARED_VALUE => {
-                me.set_shared_value(UserSlice::new(arg, size).reader())?
-            }
             RUST_MISC_DEV_HELLO => me.hello()?,
             _ => {
                 dev_err!(me.dev, "-> IOCTL not recognised: {}\n", cmd);
@@ -261,6 +224,7 @@ impl MiscDevice for RustMiscDevice {
         Ok(0)
     }
 }
+
 #[pinned_drop]
 impl PinnedDrop for RustMiscDevice {
     fn drop(self: Pin<&mut Self>) {
@@ -271,7 +235,7 @@ impl PinnedDrop for RustMiscDevice {
 impl RustMiscDevice {
     fn set_value(&self, mut reader: UserSliceReader) -> Result<isize> {
         let new_value = reader.read::<i32>()?;
-        let mut guard = self.unique.lock();
+        let mut guard = self.inner.lock();
 
         dev_info!(
             self.dev,
@@ -284,38 +248,7 @@ impl RustMiscDevice {
     }
 
     fn get_value(&self, mut writer: UserSliceWriter) -> Result<isize> {
-        let guard = self.unique.lock();
-        let value = guard.value;
-
-        // Free-up the lock and use our locally cached instance from here
-        drop(guard);
-
-        dev_info!(
-            self.dev,
-            "-> Copying data to userspace (value: {})\n",
-            &value
-        );
-
-        writer.write::<i32>(&value)?;
-        Ok(0)
-    }
-
-    fn set_shared_value(&self, mut reader: UserSliceReader) -> Result<isize> {
-        let new_value = reader.read::<i32>()?;
-        let mut guard = self.shared.lock();
-
-        dev_info!(
-            self.dev,
-            "-> Copying data from userspace (value: {})\n",
-            new_value
-        );
-
-        guard.value = new_value;
-        Ok(0)
-    }
-
-    fn get_shared_value(&self, mut writer: UserSliceWriter) -> Result<isize> {
-        let guard = self.shared.lock();
+        let guard = self.inner.lock();
         let value = guard.value;
 
         // Free-up the lock and use our locally cached instance from here
