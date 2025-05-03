@@ -198,6 +198,34 @@ impl Device {
         unsafe { container_of!(self.0.as_raw(), bindings::platform_device, dev) }.cast_mut()
     }
 
+    /// Returns the irq at `index`, if any.
+    pub fn irq(&self, index: u32) -> Option<u32> {
+        // SAFETY: `self.as_raw()` returns a valid pointer to a `struct platform_device`.
+        let ret = unsafe {
+            bindings::platform_get_irq(self.as_raw(), index)
+        };
+
+        if ret < 0 {
+            None
+        } else {
+            Some(ret as _)
+        }
+    }
+
+    /// Returns the resource with a given `name`, if any.
+    pub fn irq_byname(&self, name: &CStr) -> Option<u32> {
+        // SAFETY: `self.as_raw()` returns a valid pointer to a `struct platform_device`.
+        let ret = unsafe {
+            bindings::platform_get_irq_byname(self.as_raw(), name.as_char_ptr())
+        };
+
+        if ret < 0 {
+            None
+        } else {
+            Some(ret as _)
+        }
+    }
+
     /// Maps a platform resource through ioremap() where the size is known at
     /// compile time.
     ///

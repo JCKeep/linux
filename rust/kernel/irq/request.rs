@@ -18,7 +18,7 @@ use crate::str::CStr;
 ///
 /// Values can be used from the [`flags`] module.
 #[derive(Clone, Copy)]
-pub struct Flags(u64);
+pub struct Flags(pub(crate) u64);
 
 impl core::ops::BitOr for Flags {
     type Output = Self;

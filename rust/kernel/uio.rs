@@ -10,7 +10,7 @@ use crate::{
     device,
     error::{to_result, Result, VTABLE_DEFAULT_ERROR},
     ffi,
-    irq::request::IrqReturn,
+    irq::{self, request::IrqReturn},
     mm::virt::VmAreaNew,
     prelude::*,
     types::{ARef, ForeignOwnable, Opaque},
@@ -29,9 +29,9 @@ pub struct UioDeviceOptions {
     /// The version of your driver, appears in `/sys/class/uio/uioX/version`.
     pub version: &'static CStr,
     /// Interrupt number.
-    pub irq: ffi::c_int,
+    pub irq: u32,
     /// irq flags pass to the `request_irq()`
-    pub irq_flags: usize,
+    pub irq_flags: irq::request::Flags,
     /// uio memory maps
     pub mem: [UioDeviceMemOptions; MAX_UIO_MAPS],
 }
@@ -43,7 +43,7 @@ impl UioDeviceOptions {
             name,
             version,
             irq: irq_flags::UIO_IRQ_NONE,
-            irq_flags: 0,
+            irq_flags: irq::request::Flags(0),
             mem: [const { UioDeviceMemOptions::new() }; MAX_UIO_MAPS],
         }
     }
@@ -74,7 +74,7 @@ impl UioDeviceOptions {
             pr_warn!("Ignore IRQ in `uio::Registration`, not implementing `UioDevice::handler`!\n");
         } else {
             result.irq = self.irq as _;
-            result.irq_flags = self.irq_flags as _;
+            result.irq_flags = self.irq_flags.0 as _;
         }
 
         // SAFETY: kernel `struct uio_mem` and `UioDeviceMemmap` has same memory layout
@@ -465,9 +465,9 @@ impl UioDeviceMemOptions {
 pub mod irq_flags {
     /// A custom IRQ type defined by the driver.
     /// Used when the interrupt mechanism does not conform to standard types.
-    pub const UIO_IRQ_CUSTOM: crate::ffi::c_int = bindings::UIO_IRQ_CUSTOM as _;
+    pub const UIO_IRQ_CUSTOM: u32 = bindings::UIO_IRQ_CUSTOM as _;
     /// No interrupt is used. The driver does not signal the user-space application via IRQs.
-    pub const UIO_IRQ_NONE: crate::ffi::c_int = bindings::UIO_IRQ_NONE as _;
+    pub const UIO_IRQ_NONE: u32 = bindings::UIO_IRQ_NONE as _;
 }
 
 /// Types of memory address mapping for UIO devices.
