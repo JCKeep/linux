@@ -646,3 +646,98 @@ impl<T> UnsafePinned<T> {
         UnsafeCell::raw_get(this.cast::<UnsafeCell<MaybeUninit<T>>>()).cast::<T>()
     }
 }
+
+/// A lockable object.
+///
+/// Implementers must implement [`Lockable::raw_lock`] and [`Lockable::unlock`], and they'll get a
+/// `lock` method that returns a guard that can be used to access the locked object and unlocks it
+/// automatically when it goes out of scope.
+///
+/// `M` is a tag that may be used to speficy which mode to lock/unlock when an object may be
+/// locked in multiple ways. For example, inodes have `i_lock` and `i_rwsem` so they can be locked
+/// in 3 different modes. If an implementer can be locked in only one way, the default unit type
+/// can be omitted for brevity.
+///
+/// # Safety
+///
+/// The [`Lockable::raw_lock`] function must indeed lock the object, otherwise we may run into UB
+/// if multiple instances believe they have properly serialised access.
+pub unsafe trait Lockable<M = ()> {
+    /// Locks the object.
+    ///
+    /// The returned guard will automatically unlock the object when it goes out of scope.
+    fn lock(&self) -> Locked<&Self, M> {
+        self.raw_lock();
+
+        // SAFETY: The object was locked above, so responsibility to unlock is transferred to the
+        // `Locked` instance.
+        unsafe { Locked::new(self) }
+    }
+
+    /// Locks the object.
+    fn raw_lock(&self);
+
+    /// Unlocks the object.
+    ///
+    /// # Safety
+    ///
+    /// The object must be locked. And it must not be used again as a locked object before another
+    /// call to [`Self::raw_lock`].
+    unsafe fn unlock(&self);
+}
+
+/// A locked version of an existing type.
+///
+/// # Invariants
+///
+/// The object is locked and the responsibility to unlock it belongs to the [`Locked`] instance.
+#[repr(transparent)]
+pub struct Locked<T: Deref, M = ()>(T, PhantomData<M>)
+where
+    T::Target: Lockable<M>;
+
+impl<T: Deref, M> Locked<T, M>
+where
+    T::Target: Lockable<M>,
+{
+    /// Creates a new instance of [`Locked`].
+    ///
+    /// # Safety
+    ///
+    /// The instance of `T` must be locked and the responsibility to unlock it is transferred to
+    /// the returned instance of [`Locked`].
+    pub unsafe fn new(v: T) -> Self {
+        // INVARIANT: The safety requirements ensure that the invariants hold.
+        Self(v, PhantomData)
+    }
+}
+
+impl<T: Deref, M> Deref for Locked<T, M>
+where
+    T::Target: Lockable<M>,
+{
+    type Target = T::Target;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Deref, M> Drop for Locked<T, M>
+where
+    T::Target: Lockable<M>,
+{
+    fn drop(&mut self) {
+        // SAFETY: The type invariants guarantee that the object is locked.
+        unsafe { self.0.unlock() }
+    }
+}
+
+impl<T: Lockable<M> + AlwaysRefCounted, M> From<Locked<&T, M>> for Locked<ARef<T>, M> {
+    fn from(value: Locked<&T, M>) -> Self {
+        let aref = ARef::<T>::from(value.deref());
+        core::mem::forget(value);
+        // SAFETY: We forgot the locked value above, so responsibility is transferred to new
+        // instance of [`Locked`].
+        unsafe { Locked::new(aref) }
+    }
+}

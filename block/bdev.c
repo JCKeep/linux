@@ -34,21 +34,6 @@
 /* Should we allow writing to mounted block devices? */
 static bool bdev_allow_write_mounted = IS_ENABLED(CONFIG_BLK_DEV_WRITE_MOUNTED);
 
-struct bdev_inode {
-	struct block_device bdev;
-	struct inode vfs_inode;
-};
-
-static inline struct bdev_inode *BDEV_I(struct inode *inode)
-{
-	return container_of(inode, struct bdev_inode, vfs_inode);
-}
-
-static inline struct inode *BD_INODE(struct block_device *bdev)
-{
-	return &container_of(bdev, struct bdev_inode, bdev)->vfs_inode;
-}
-
 struct block_device *I_BDEV(struct inode *inode)
 {
 	return &BDEV_I(inode)->bdev;

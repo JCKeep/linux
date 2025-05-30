@@ -7,13 +7,25 @@
 //! C headers: [`include/linux/fs.h`](srctree/include/linux/fs.h) and
 //! [`include/linux/file.h`](srctree/include/linux/file.h)
 
+use macros::vtable;
+
 use crate::{
     bindings,
     cred::Credential,
-    error::{code::*, Error, Result},
-    types::{ARef, AlwaysRefCounted, NotThreadSafe, Opaque},
+    error::{code::*, from_result, Error, Result},
+    types::{ARef, AlwaysRefCounted, Locked, NotThreadSafe, Opaque},
+    uaccess::{UserSlice, UserSliceWriter},
 };
-use core::ptr;
+use core::{
+    marker::PhantomData,
+    mem::{ManuallyDrop, MaybeUninit},
+    ptr,
+};
+
+use super::{
+    inode::{self, Ino},
+    DEntry, FileSystem, INode, Offset, UnspecifiedFS,
+};
 
 /// Flags associated with a [`File`].
 pub mod flags {
@@ -176,21 +188,22 @@ pub mod flags {
 /// * There must not be any active calls to `fdget_pos` on this file that did not take the
 ///   `f_pos_lock` mutex.
 #[repr(transparent)]
-pub struct File {
+pub struct File<T: FileSystem + ?Sized = UnspecifiedFS> {
     inner: Opaque<bindings::file>,
+    _phantom: PhantomData<T>,
 }
 
 // SAFETY: This file is known to not have any active `fdget_pos` calls that did not take the
 // `f_pos_lock` mutex, so it is safe to transfer it between threads.
-unsafe impl Send for File {}
+unsafe impl<T: FileSystem + ?Sized> Send for File<T> {}
 
 // SAFETY: This file is known to not have any active `fdget_pos` calls that did not take the
 // `f_pos_lock` mutex, so it is safe to access its methods from several threads in parallel.
-unsafe impl Sync for File {}
+unsafe impl<T: FileSystem + ?Sized> Sync for File<T> {}
 
 // SAFETY: The type invariants guarantee that `File` is always ref-counted. This implementation
 // makes `ARef<File>` own a normal refcount.
-unsafe impl AlwaysRefCounted for File {
+unsafe impl<T: FileSystem + ?Sized> AlwaysRefCounted for File<T> {
     #[inline]
     fn inc_ref(&self) {
         // SAFETY: The existence of a shared reference means that the refcount is nonzero.
@@ -198,7 +211,7 @@ unsafe impl AlwaysRefCounted for File {
     }
 
     #[inline]
-    unsafe fn dec_ref(obj: ptr::NonNull<File>) {
+    unsafe fn dec_ref(obj: ptr::NonNull<Self>) {
         // SAFETY: To call this method, the caller passes us ownership of a normal refcount, so we
         // may drop it. The cast is okay since `File` has the same representation as `struct file`.
         unsafe { bindings::fput(obj.cast().as_ptr()) }
@@ -219,13 +232,14 @@ unsafe impl AlwaysRefCounted for File {
 ///   must be on the same thread as this file.
 ///
 /// [`assume_no_fdget_pos`]: LocalFile::assume_no_fdget_pos
-pub struct LocalFile {
+pub struct LocalFile<T: FileSystem + ?Sized = UnspecifiedFS> {
     inner: Opaque<bindings::file>,
+    _phantom: PhantomData<T>,
 }
 
 // SAFETY: The type invariants guarantee that `LocalFile` is always ref-counted. This implementation
 // makes `ARef<File>` own a normal refcount.
-unsafe impl AlwaysRefCounted for LocalFile {
+unsafe impl<T: FileSystem + ?Sized> AlwaysRefCounted for LocalFile<T> {
     #[inline]
     fn inc_ref(&self) {
         // SAFETY: The existence of a shared reference means that the refcount is nonzero.
@@ -233,14 +247,14 @@ unsafe impl AlwaysRefCounted for LocalFile {
     }
 
     #[inline]
-    unsafe fn dec_ref(obj: ptr::NonNull<LocalFile>) {
+    unsafe fn dec_ref(obj: ptr::NonNull<Self>) {
         // SAFETY: To call this method, the caller passes us ownership of a normal refcount, so we
         // may drop it. The cast is okay since `File` has the same representation as `struct file`.
         unsafe { bindings::fput(obj.cast().as_ptr()) }
     }
 }
 
-impl LocalFile {
+impl<T: FileSystem + ?Sized> LocalFile<T> {
     /// Constructs a new `struct file` wrapper from a file descriptor.
     ///
     /// The file descriptor belongs to the current process, and there might be active local calls
@@ -250,7 +264,7 @@ impl LocalFile {
     ///
     /// [`assume_no_fdget_pos`]: LocalFile::assume_no_fdget_pos
     #[inline]
-    pub fn fget(fd: u32) -> Result<ARef<LocalFile>, BadFdError> {
+    pub fn fget(fd: u32) -> Result<ARef<Self>, BadFdError> {
         // SAFETY: FFI call, there are no requirements on `fd`.
         let ptr = ptr::NonNull::new(unsafe { bindings::fget(fd) }).ok_or(BadFdError)?;
 
@@ -271,7 +285,7 @@ impl LocalFile {
     /// * The caller must ensure that if there is an active call to `fdget_pos` that did not take
     ///   the `f_pos_lock` mutex, then that call is on the current thread.
     #[inline]
-    pub unsafe fn from_raw_file<'a>(ptr: *const bindings::file) -> &'a LocalFile {
+    pub unsafe fn from_raw_file<'a>(ptr: *const bindings::file) -> &'a Self {
         // SAFETY: The caller guarantees that the pointer is not dangling and stays valid for the
         // duration of 'a. The cast is okay because `File` is `repr(transparent)`.
         //
@@ -294,7 +308,7 @@ impl LocalFile {
     ///
     /// There must not be any active `fdget_pos` calls on the current thread.
     #[inline]
-    pub unsafe fn assume_no_fdget_pos(me: ARef<LocalFile>) -> ARef<File> {
+    pub unsafe fn assume_no_fdget_pos(me: ARef<Self>) -> ARef<File<T>> {
         // INVARIANT: There are no `fdget_pos` calls on the current thread, and by the type
         // invariants, if there is a `fdget_pos` call on another thread, then it took the
         // `f_pos_lock` mutex.
@@ -333,9 +347,22 @@ impl LocalFile {
         // FIXME(read_once): Replace with `read_once` when available on the Rust side.
         unsafe { core::ptr::addr_of!((*self.as_ptr()).f_flags).read_volatile() }
     }
+
+    /// Returns the inode associated with the file.
+    pub fn inode(&self) -> &INode<T> {
+        // SAFETY: `f_inode` is an immutable field, so it's safe to read it.
+        unsafe { INode::from_raw((*self.inner.get()).f_inode) }
+    }
+
+    /// Returns the dentry associated with the file.
+    pub fn dentry(&self) -> &DEntry<T> {
+        // SAFETY: `f_path` is an immutable field, so it's safe to read it. And will remain safe to
+        // read while the `&self` is valid.
+        unsafe { DEntry::from_raw((*self.inner.get()).f_path.dentry) }
+    }
 }
 
-impl File {
+impl<T: FileSystem + ?Sized> File<T> {
     /// Creates a reference to a [`File`] from a valid pointer.
     ///
     /// # Safety
@@ -345,26 +372,26 @@ impl File {
     /// * The caller must ensure that if there are active `fdget_pos` calls on this file, then they
     ///   took the `f_pos_lock` mutex.
     #[inline]
-    pub unsafe fn from_raw_file<'a>(ptr: *const bindings::file) -> &'a File {
+    pub unsafe fn from_raw_file<'a>(ptr: *const bindings::file) -> &'a Self {
         // SAFETY: The caller guarantees that the pointer is not dangling and stays valid for the
         // duration of 'a. The cast is okay because `File` is `repr(transparent)`.
         //
         // INVARIANT: The caller guarantees that there are no problematic `fdget_pos` calls.
-        unsafe { &*ptr.cast() }
+        unsafe { &*ptr.cast::<Self>() }
     }
 }
 
 // Make LocalFile methods available on File.
-impl core::ops::Deref for File {
-    type Target = LocalFile;
+impl<T: FileSystem + ?Sized> core::ops::Deref for File<T> {
+    type Target = LocalFile<T>;
     #[inline]
-    fn deref(&self) -> &LocalFile {
+    fn deref(&self) -> &LocalFile<T> {
         // SAFETY: The caller provides a `&File`, and since it is a reference, it must point at a
         // valid file for the desired duration.
         //
         // By the type invariants, there are no `fdget_pos` calls that did not take the
         // `f_pos_lock` mutex.
-        unsafe { LocalFile::from_raw_file(self as *const File as *const bindings::file) }
+        unsafe { LocalFile::<T>::from_raw_file(self as *const Self as *const bindings::file) }
     }
 }
 
@@ -457,5 +484,322 @@ impl From<BadFdError> for Error {
 impl core::fmt::Debug for BadFdError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.pad("EBADF")
+    }
+}
+
+/// The types of directory entries reported by [`Operations::read_dir`].
+#[repr(u32)]
+#[derive(Copy, Clone)]
+pub enum DirEntryType {
+    /// Unknown type.
+    Unknown = bindings::DT_UNKNOWN,
+
+    /// Named pipe (first-in, first-out) type.
+    Fifo = bindings::DT_FIFO,
+
+    /// Character device type.
+    Chr = bindings::DT_CHR,
+
+    /// Directory type.
+    Dir = bindings::DT_DIR,
+
+    /// Block device type.
+    Blk = bindings::DT_BLK,
+
+    /// Regular file type.
+    Reg = bindings::DT_REG,
+
+    /// Symbolic link type.
+    Lnk = bindings::DT_LNK,
+
+    /// Named unix-domain socket type.
+    Sock = bindings::DT_SOCK,
+
+    /// White-out type.
+    Wht = bindings::DT_WHT,
+}
+
+impl From<&inode::Type> for DirEntryType {
+    fn from(value: &inode::Type) -> Self {
+        match value {
+            inode::Type::Fifo => DirEntryType::Fifo,
+            inode::Type::Chr(_, _) => DirEntryType::Chr,
+            inode::Type::Dir => DirEntryType::Dir,
+            inode::Type::Blk(_, _) => DirEntryType::Blk,
+            inode::Type::Reg => DirEntryType::Reg,
+            inode::Type::Lnk(_) => DirEntryType::Lnk,
+            inode::Type::Sock => DirEntryType::Sock,
+        }
+    }
+}
+
+impl TryFrom<u32> for DirEntryType {
+    type Error = crate::error::Error;
+
+    fn try_from(v: u32) -> Result<Self> {
+        match v {
+            v if v == Self::Unknown as u32 => Ok(Self::Unknown),
+            v if v == Self::Fifo as u32 => Ok(Self::Fifo),
+            v if v == Self::Chr as u32 => Ok(Self::Chr),
+            v if v == Self::Dir as u32 => Ok(Self::Dir),
+            v if v == Self::Blk as u32 => Ok(Self::Blk),
+            v if v == Self::Reg as u32 => Ok(Self::Reg),
+            v if v == Self::Lnk as u32 => Ok(Self::Lnk),
+            v if v == Self::Sock as u32 => Ok(Self::Sock),
+            v if v == Self::Wht as u32 => Ok(Self::Wht),
+            _ => Err(EDOM),
+        }
+    }
+}
+
+/// Directory entry emitter.
+///
+/// This is used in [`Operations::read_dir`] implementations to report the directory entry.
+#[repr(transparent)]
+pub struct DirEmitter(bindings::dir_context);
+
+impl DirEmitter {
+    /// Returns the current position of the emitter.
+    pub fn pos(&self) -> Offset {
+        self.0.pos
+    }
+
+    /// Emits a directory entry.
+    ///
+    /// `pos_inc` is the number with which to increment the current position on success.
+    ///
+    /// `name` is the name of the entry.
+    ///
+    /// `ino` is the inode number of the entry.
+    ///
+    /// `etype` is the type of the entry.
+    ///
+    /// Returns `false` when the entry could not be emitted, possibly because the user-provided
+    /// buffer is full.
+    pub fn emit(&mut self, pos_inc: Offset, name: &[u8], ino: Ino, etype: DirEntryType) -> bool {
+        let Ok(name_len) = i32::try_from(name.len()) else {
+            return false;
+        };
+
+        let Some(actor) = self.0.actor else {
+            return false;
+        };
+
+        let Some(new_pos) = self.0.pos.checked_add(pos_inc) else {
+            return false;
+        };
+
+        // SAFETY: `name` is valid at least for the duration of the `actor` call.
+        let ret = unsafe {
+            actor(
+                &mut self.0,
+                name.as_ptr().cast(),
+                name_len,
+                self.0.pos,
+                ino,
+                etype as _,
+            )
+        };
+        if ret {
+            self.0.pos = new_pos;
+        }
+        ret
+    }
+}
+
+/// Indicates how to interpret the `offset` argument in [`Operations::seek`].
+#[repr(u32)]
+pub enum Whence {
+    /// `offset` bytes from the start of the file.
+    Set = bindings::SEEK_SET,
+
+    /// `offset` bytes from the end of the file.
+    End = bindings::SEEK_END,
+
+    /// `offset` bytes from the current location.
+    Cur = bindings::SEEK_CUR,
+
+    /// The next location greater than or equal to `offset` that contains data.
+    Data = bindings::SEEK_DATA,
+
+    /// The next location greater than or equal to `offset` that contains a hole.
+    Hole = bindings::SEEK_HOLE,
+}
+
+impl TryFrom<i32> for Whence {
+    type Error = crate::error::Error;
+
+    fn try_from(v: i32) -> Result<Self> {
+        match v {
+            v if v == Self::Set as i32 => Ok(Self::Set),
+            v if v == Self::End as i32 => Ok(Self::End),
+            v if v == Self::Cur as i32 => Ok(Self::Cur),
+            v if v == Self::Data as i32 => Ok(Self::Data),
+            v if v == Self::Hole as i32 => Ok(Self::Hole),
+            _ => Err(EDOM),
+        }
+    }
+}
+
+/// Generic implementation of [`Operations::seek`].
+pub fn generic_seek(
+    file: &File<impl FileSystem + ?Sized>,
+    offset: Offset,
+    whence: Whence,
+) -> Result<Offset> {
+    // SAFETY: todo
+    let n = unsafe { bindings::generic_file_llseek(file.inner.get(), offset, whence as i32) };
+    if n < 0 {
+        Err(Error::from_errno(n.try_into()?))
+    } else {
+        Ok(n)
+    }
+}
+
+/// Operations implemented by files.
+#[vtable]
+pub trait Operations {
+    /// File system that these operations are compatible with.
+    type FileSystem: FileSystem + ?Sized;
+
+    /// Reads data from this file into the caller's buffer.
+    fn read(
+        _file: &File<Self::FileSystem>,
+        _buffer: &mut UserSliceWriter,
+        _offset: &mut Offset,
+    ) -> Result<usize> {
+        Err(EINVAL)
+    }
+
+    /// Seeks the file to the given offset.
+    fn seek(_file: &File<Self::FileSystem>, _offset: Offset, _whence: Whence) -> Result<Offset> {
+        Err(EINVAL)
+    }
+
+    /// Reads directory entries from directory files.
+    ///
+    /// [`DirEmitter::pos`] holds the current position of the directory reader.
+    fn read_dir(
+        _file: &File<Self::FileSystem>,
+        _inode: &Locked<&INode<Self::FileSystem>, inode::ReadSem>,
+        _emitter: &mut DirEmitter,
+    ) -> Result {
+        Err(EINVAL)
+    }
+}
+
+/// Represents file operations.
+pub struct Ops<T: FileSystem + ?Sized>(pub(crate) *const bindings::file_operations, PhantomData<T>);
+
+impl<T: FileSystem + ?Sized> Ops<T> {
+    /// Returns file operations for page-cache-based ro files.
+    pub fn generic_ro_file() -> Self {
+        // SAFETY: This is a constant in C, it never changes.
+        Self(unsafe { &bindings::generic_ro_fops }, PhantomData)
+    }
+
+    /// Creates file operations from a type that implements the [`Operations`] trait.
+    pub const fn new<U: Operations<FileSystem = T> + ?Sized>() -> Self {
+        struct Table<T: Operations + ?Sized>(PhantomData<T>);
+        impl<T: Operations + ?Sized> Table<T> {
+            const TABLE: bindings::file_operations = bindings::file_operations {
+                llseek: if T::HAS_SEEK {
+                    Some(Self::seek_callback)
+                } else {
+                    None
+                },
+                read: if T::HAS_READ {
+                    Some(Self::read_callback)
+                } else {
+                    None
+                },
+                iterate_shared: if T::HAS_READ_DIR {
+                    Some(Self::read_dir_callback)
+                } else {
+                    None
+                },
+                // SAFETY: All zeros is a valid value for `bindings::file_operations`.
+                ..unsafe { MaybeUninit::zeroed().assume_init() }
+            };
+
+            /// # Safety
+            ///
+            /// todo
+            unsafe extern "C" fn seek_callback(
+                file_ptr: *mut bindings::file,
+                offset: bindings::loff_t,
+                whence: i32,
+            ) -> bindings::loff_t {
+                from_result(|| {
+                    // SAFETY: The C API guarantees that `file` is valid for the duration of the
+                    // callback. Since this callback is specifically for filesystem T, we know `T`
+                    // is the right filesystem.
+                    let file = unsafe { File::from_raw_file(file_ptr) };
+                    T::seek(file, offset, whence.try_into()?)
+                })
+            }
+
+            /// # Safety
+            ///
+            /// todo
+            unsafe extern "C" fn read_callback(
+                file_ptr: *mut bindings::file,
+                ptr: *mut core::ffi::c_char,
+                len: usize,
+                offset: *mut bindings::loff_t,
+            ) -> isize {
+                from_result(|| {
+                    // SAFETY: The C API guarantees that `file` is valid for the duration of the
+                    // callback. Since this callback is specifically for filesystem T, we know `T`
+                    // is the right filesystem.
+                    let file = unsafe { File::from_raw_file(file_ptr) };
+                    let mut writer = UserSlice::new(ptr as _, len).writer();
+
+                    // SAFETY: The C API guarantees that `offset` is valid for read and write.
+                    let read = T::read(file, &mut writer, unsafe { &mut *offset })?;
+                    Ok(isize::try_from(read)?)
+                })
+            }
+
+            /// # Safety
+            ///
+            /// todo
+            unsafe extern "C" fn read_dir_callback(
+                file_ptr: *mut bindings::file,
+                ctx_ptr: *mut bindings::dir_context,
+            ) -> core::ffi::c_int {
+                from_result(|| {
+                    // SAFETY: The C API guarantees that `file` is valid for the duration of the
+                    // callback. Since this callback is specifically for filesystem T, we know `T`
+                    // is the right filesystem.
+                    let file = unsafe { File::from_raw_file(file_ptr) };
+
+                    // SAFETY: The C API guarantees that this is the only reference to the
+                    // `dir_context` instance.
+                    let emitter = unsafe { &mut *ctx_ptr.cast::<DirEmitter>() };
+                    let orig_pos = emitter.pos();
+
+                    // SAFETY: The C API guarantees that the inode's rw semaphore is locked in read
+                    // mode. It does not expect callees to unlock it, so we make the locked object
+                    // manually dropped to avoid unlocking it.
+                    let locked = ManuallyDrop::new(unsafe { Locked::new(file.inode()) });
+
+                    // Call the module implementation. We ignore errors if directory entries have
+                    // been succesfully emitted: this is because we want users to see them before
+                    // the error.
+                    match T::read_dir(file, &locked, emitter) {
+                        Ok(()) => Ok(0),
+                        Err(e) => {
+                            if emitter.pos() == orig_pos {
+                                Err(e)
+                            } else {
+                                Ok(0)
+                            }
+                        }
+                    }
+                })
+            }
+        }
+        Self(&Table::<U>::TABLE, PhantomData)
     }
 }

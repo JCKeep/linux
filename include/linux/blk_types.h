@@ -198,6 +198,21 @@ static inline bool blk_path_error(blk_status_t error)
 	return true;
 }
 
+struct bdev_inode {
+	struct block_device bdev;
+	struct inode vfs_inode;
+};
+
+static inline struct bdev_inode *BDEV_I(struct inode *inode)
+{
+	return container_of(inode, struct bdev_inode, vfs_inode);
+}
+
+static inline struct inode *BD_INODE(struct block_device *bdev)
+{
+	return &container_of(bdev, struct bdev_inode, bdev)->vfs_inode;
+}
+
 struct bio_issue {
 	u64 value;
 };

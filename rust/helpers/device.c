@@ -8,3 +8,8 @@ int rust_helper_devm_add_action(struct device *dev,
 {
 	return devm_add_action(dev, action, data);
 }
+
+unsigned int rust_helper_MKDEV(unsigned int major, unsigned int minor)
+{
+	return MKDEV(major, minor);
+}

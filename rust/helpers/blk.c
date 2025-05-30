@@ -12,3 +12,13 @@ struct request *rust_helper_blk_mq_rq_from_pdu(void *pdu)
 {
 	return blk_mq_rq_from_pdu(pdu);
 }
+
+sector_t rust_helper_bdev_nr_sectors(struct block_device *bdev)
+{
+	return bdev_nr_sectors(bdev);
+}
+
+struct inode *rust_helper_BD_INODE(struct block_device *bdev)
+{
+	return BD_INODE(bdev);
+}
