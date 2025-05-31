@@ -320,6 +320,7 @@ impl<T: FileSystem + ?Sized> Context<T> for EmptyContext {
 }
 
 struct Tables<T: FileSystem + ?Sized>(T);
+
 impl<T: FileSystem + ?Sized> Tables<T> {
     const CONTEXT: bindings::fs_context_operations = bindings::fs_context_operations {
         free: Some(Self::free_callback),

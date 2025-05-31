@@ -27,6 +27,8 @@ struct Entry {
     contents: &'static [u8],
 }
 
+const FILE_NAME: &CStr = c_str!("./test.txt");
+
 const ENTRIES: [Entry; 4] = [
     Entry {
         name: b".",
@@ -49,8 +51,8 @@ const ENTRIES: [Entry; 4] = [
     Entry {
         name: b"link.txt",
         ino: 3,
-        etype: inode::Type::Lnk(Some(Either::Right(c_str!("./test.txt")))),
-        contents: b"./test.txt",
+        etype: inode::Type::Lnk(None),
+        contents: FILE_NAME.as_bytes_with_nul(),
     },
 ];
 
@@ -102,13 +104,17 @@ impl RoFs {
                     .set_aops(FILE_AOPS);
                 (0o444, 1, e.contents.len().try_into()?, inode::Type::Reg)
             }
-            inode::Type::Lnk(Some(Either::Right(s))) => {
+            inode::Type::Lnk(_) => {
+                let s = CStr::from_bytes_with_nul(e.contents).map_err(|err| {
+                    pr_err!("Invalid symlink contents: {err:?}\n");
+                    ENOENT
+                })?;
                 new.set_iops(inode::Ops::simple_symlink_inode());
                 (
                     0o444,
                     1,
                     e.contents.len().try_into()?,
-                    inode::Type::Lnk(Some(Either::Right(s))),
+                    inode::Type::Lnk(Some(CString::try_from(s)?)),
                 )
             }
             _ => return Err(ENOENT),
@@ -141,11 +147,15 @@ impl fs::FileSystem for RoFs {
         sb: &mut sb::SuperBlock<Self, sb::New>,
         _: Option<inode::Mapper>,
     ) -> Result {
+        pr_info!("fill_super called for Rust read-only file system\n");
+
         sb.set_magic(0x52555354);
         Ok(())
     }
 
     fn init_root(sb: &sb::SuperBlock<Self>) -> Result<dentry::Root<Self>> {
+        pr_info!("init_root called for Rust read-only file system\n");
+
         let inode = Self::iget(sb, &ENTRIES[0])?;
         dentry::Root::try_new(inode)
     }

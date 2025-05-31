@@ -3,6 +3,7 @@
 //! String representations.
 
 use crate::alloc::{flags::*, AllocError, KVec};
+use crate::types::ForeignOwnable;
 use core::fmt::{self, Write};
 use core::ops::{self, Deref, DerefMut, Index};
 
@@ -195,6 +196,25 @@ impl CStr {
         // SAFETY: As `len` is returned by `strlen`, `bytes` does not contain interior `NUL`.
         // As we have added 1 to `len`, the last byte is known to be `NUL`.
         unsafe { Self::from_bytes_with_nul_unchecked(bytes) }
+    }
+
+    /// Wraps a raw C string pointer.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a valid pointer to a `NUL`-terminated C string, and it must
+    /// last at least `'a`. When `CStr` is alive, the memory pointed by `ptr`
+    /// must not be mutated.
+    #[inline]
+    pub unsafe fn from_char_ptr_mut<'a>(ptr: *mut crate::ffi::c_char) -> &'a mut Self {
+        // SAFETY: The safety precondition guarantees `ptr` is a valid pointer
+        // to a `NUL`-terminated C string.
+        let len = unsafe { bindings::strlen(ptr) } + 1;
+        // SAFETY: Lifetime guaranteed by the safety precondition.
+        let bytes = unsafe { core::slice::from_raw_parts_mut(ptr as _, len) };
+        // SAFETY: As `len` is returned by `strlen`, `bytes` does not contain interior `NUL`.
+        // As we have added 1 to `len`, the last byte is known to be `NUL`.
+        unsafe { Self::from_bytes_with_nul_unchecked_mut(bytes) }
     }
 
     /// Creates a [`CStr`] from a `[u8]`.
@@ -892,6 +912,40 @@ impl<'a> TryFrom<&'a CStr> for CString {
 impl fmt::Debug for CString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
+    }
+}
+
+// SAFETY: The `into_foreign` function returns a pointer that is NUL-terminated.
+unsafe impl ForeignOwnable for CString {
+    type PointedTo = kernel::ffi::c_char;
+    type Borrowed<'a> = &'a CStr;
+    type BorrowedMut<'a> = &'a mut CStr;
+
+    fn into_foreign(self) -> *mut Self::PointedTo {
+        let (ptr, _, _) = self.buf.into_raw_parts();
+
+        ptr.cast()
+    }
+
+    unsafe fn from_foreign(ptr: *mut Self::PointedTo) -> Self {
+        // SAFETY: The pointer `ptr` is guaranteed to point to a valid `NUL`-terminated C string.
+        let len = unsafe { bindings::strlen(ptr) } + 1;
+
+        CString {
+            // SAFETY: The `CString` capacity is always at least `len`, and the last byte is `NUL`.
+            // Ignore [len..capacity] is safe, we just don't use it and it can safely free.
+            buf: unsafe { KVec::from_raw_parts(ptr, len, len) },
+        }
+    }
+
+    unsafe fn borrow<'a>(ptr: *mut Self::PointedTo) -> Self::Borrowed<'a> {
+        // SAFETY: The pointer `ptr` is guaranteed to point to a valid `NUL`-terminated C string.
+        unsafe { CStr::from_char_ptr(ptr) }
+    }
+
+    unsafe fn borrow_mut<'a>(ptr: *mut Self::PointedTo) -> Self::BorrowedMut<'a> {
+        // SAFETY: The pointer `ptr` is guaranteed to point to a valid `NUL`-terminated C string.
+        unsafe { CStr::from_char_ptr_mut(ptr) }
     }
 }
 

@@ -107,7 +107,7 @@ impl<T: FileSystem + ?Sized> INode<T> {
             crate::build_error!("inode data type is unspecified");
         }
 
-        // SAFETY: todo
+        // SAFETY: The `INode` is always a member of `WithData<T::INodeData>`, so we can safely.
         let outerp = unsafe { container_of!(self.0.get(), WithData<T::INodeData>, inode) };
         // SAFETY: `self` is guaranteed to be valid by the existence of a shared reference
         // (`&self`) to it. Additionally, we know `T::INodeData` is always initialised in an
@@ -240,12 +240,16 @@ impl<T: FileSystem + ?Sized> INode<T> {
         // superblock associated to it.
         let reg = unsafe { &*container_of!(super_type, super::Registration, fs) };
 
+        let raw_cache = reg
+            .inode_cache
+            .as_ref()
+            .map(|cache| cache.as_ptr())
+            .unwrap_or(ptr::null_mut());
+
         // SAFETY: `sb` and `cache` are guaranteed to be valid by the callback contract and by
         // the existence of a superblock respectively.
-        let ptr = unsafe {
-            bindings::alloc_inode_sb(sb, MemCache::ptr(&reg.inode_cache), bindings::GFP_KERNEL)
-        }
-        .cast::<WithData<T::INodeData>>();
+        let ptr = unsafe { bindings::alloc_inode_sb(sb, raw_cache, bindings::GFP_KERNEL) }
+            .cast::<WithData<T::INodeData>>();
         if ptr.is_null() {
             return ptr::null_mut();
         }
@@ -280,8 +284,7 @@ impl<T: FileSystem + ?Sized> INode<T> {
                 if !lnk.is_null() {
                     // SAFETY: This value is on link inode are only populated from with the result
                     // of `CString::into_foreign`.
-                    // unsafe { CString::from_foreign(lnk.cast::<core::ffi::c_void>()) };
-                    todo!("support CString in symbolic links");
+                    unsafe { CString::from_foreign(lnk.cast()) };
                 }
             }
 
@@ -295,15 +298,10 @@ impl<T: FileSystem + ?Sized> INode<T> {
             // it is allocated from the regular memcache, which is what `free_inode_nonrcu` uses
             // to free the inode.
             unsafe { bindings::free_inode_nonrcu(inode) };
-        } else {
+        } else if let Some(ref cache) = reg.inode_cache {
             // SAFETY: The callback contract guarantees that the inode was previously allocated via the
             // `alloc_inode_callback` callback, so it is safe to free it back to the cache.
-            unsafe {
-                bindings::kmem_cache_free(
-                    MemCache::ptr(&reg.inode_cache),
-                    ptr.cast::<core::ffi::c_void>(),
-                )
-            };
+            unsafe { bindings::kmem_cache_free(cache.as_ptr(), ptr.cast()) };
         }
     }
 }
@@ -427,15 +425,7 @@ impl<T: FileSystem + ?Sized> New<T> {
                     }
                 }
                 if let Some(s) = str {
-                    match s {
-                        Either::Left(_) => {
-                            // inode.__bindgen_anon_5.i_link = s.into_foreign().cast::<i8>().cast_mut();
-                            todo!("support CString in symbolic links");
-                        }
-                        Either::Right(s) => {
-                            inode.__bindgen_anon_5.i_link = s.as_char_ptr().cast_mut()
-                        }
-                    }
+                    inode.__bindgen_anon_5.i_link = s.into_foreign().cast();
                 }
                 bindings::S_IFLNK
             }
@@ -549,7 +539,7 @@ pub enum Type {
     Reg,
 
     /// Symbolic link type.
-    Lnk(Option<Either<CString, &'static CStr>>),
+    Lnk(Option<CString>),
 
     /// Named unix-domain socket type.
     Sock,
@@ -686,13 +676,11 @@ impl<T: FileSystem + ?Sized> Ops<T> {
             extern "C" fn get_link_callback(
                 dentry_ptr: *mut bindings::dentry,
                 inode_ptr: *mut bindings::inode,
-                _delayed_call: *mut bindings::delayed_call,
+                delayed_call: *mut bindings::delayed_call,
             ) -> *const core::ffi::c_char {
-                #[allow(unused)]
-                extern "C" fn drop_cstring(_ptr: *mut core::ffi::c_void) {
+                extern "C" fn drop_cstring(ptr: *mut core::ffi::c_void) {
                     // SAFETY: The argument came from a previous call to `into_foreign` below.
-                    // unsafe { CString::from_foreign(ptr) };
-                    todo!("support CString in symbolic links");
+                    unsafe { CString::from_foreign(ptr.cast()) };
                 }
 
                 let dentry = if dentry_ptr.is_null() {
@@ -709,18 +697,14 @@ impl<T: FileSystem + ?Sized> Ops<T> {
                 match T::get_link(dentry, inode) {
                     Err(e) => e.to_ptr::<core::ffi::c_char>(),
                     Ok(Either::Right(str)) => str.as_char_ptr(),
-                    Ok(Either::Left(_str)) => {
-                        //     let ptr = str.into_foreign();
-                        //     unsafe {
-                        //         bindings::set_delayed_call(
-                        //             delayed_call,
-                        //             Some(drop_cstring),
-                        //             ptr.cast_mut(),
-                        //         )
-                        //     };
+                    Ok(Either::Left(str)) => {
+                        let ptr = str.into_foreign();
+                        // SAFETY: todo
+                        unsafe {
+                            bindings::set_delayed_call(delayed_call, Some(drop_cstring), ptr.cast())
+                        };
 
-                        //     ptr.cast::<core::ffi::c_char>()
-                        todo!("support CString in symbolic links");
+                        ptr.cast()
                     }
                 }
             }

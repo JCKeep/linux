@@ -39,12 +39,11 @@ impl MemCache {
         Ok(Self { ptr })
     }
 
-    /// Returns the pointer to the `kmem_cache` instance, or null if it's `None`.
+    /// Returns the pointer to the `kmem_cache` instance
     ///
     /// This is a helper for functions like `alloc_inode_sb` where the cache is optional.
-    pub fn ptr(c: &Option<Self>) -> *mut bindings::kmem_cache {
-        c.as_ref()
-            .map_or(ptr::null_mut(), |cache| cache.ptr.as_ptr())
+    pub fn as_ptr(&self) -> *mut bindings::kmem_cache {
+        self.ptr.as_ptr()
     }
 }
 
