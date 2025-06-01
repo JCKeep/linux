@@ -353,7 +353,7 @@ pub enum HrTimerRestart {
 }
 
 impl From<bindings::hrtimer_restart> for HrTimerRestart {
-    fn from(value: u32) -> Self {
+    fn from(value: bindings::hrtimer_restart) -> Self {
         match value {
             bindings::hrtimer_restart_HRTIMER_NORESTART => Self::NoRestart,
             _ => Self::Restart,

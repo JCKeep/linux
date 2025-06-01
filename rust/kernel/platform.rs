@@ -201,9 +201,7 @@ impl Device {
     /// Returns the irq at `index`, if any.
     pub fn irq(&self, index: u32) -> Option<u32> {
         // SAFETY: `self.as_raw()` returns a valid pointer to a `struct platform_device`.
-        let ret = unsafe {
-            bindings::platform_get_irq(self.as_raw(), index)
-        };
+        let ret = unsafe { bindings::platform_get_irq(self.as_raw(), index) };
 
         if ret < 0 {
             None
@@ -215,9 +213,7 @@ impl Device {
     /// Returns the resource with a given `name`, if any.
     pub fn irq_byname(&self, name: &CStr) -> Option<u32> {
         // SAFETY: `self.as_raw()` returns a valid pointer to a `struct platform_device`.
-        let ret = unsafe {
-            bindings::platform_get_irq_byname(self.as_raw(), name.as_char_ptr())
-        };
+        let ret = unsafe { bindings::platform_get_irq_byname(self.as_raw(), name.as_char_ptr()) };
 
         if ret < 0 {
             None

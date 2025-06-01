@@ -341,7 +341,7 @@ where
                     return RawEntry::Occupied(OccupiedEntry {
                         rbtree: self,
                         node_links: curr,
-                    })
+                    });
                 }
             }
             parent = curr;
