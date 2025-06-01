@@ -489,7 +489,7 @@ impl<T: FileSystem + ?Sized> New<T> {
     }
 
     /// Sets the inode operations on this new inode.
-    pub fn set_iops(&mut self, iops: Ops<T>) -> &mut Self {
+    pub fn set_iops<U: Operations>(&mut self, iops: Ops<U>) -> &mut Self {
         // SAFETY: By the type invariants, it's ok to modify the inode.
         let inode = unsafe { self.0.as_mut() };
         inode.i_op = iops.0;
@@ -497,7 +497,7 @@ impl<T: FileSystem + ?Sized> New<T> {
     }
 
     /// Sets the file operations on this new inode.
-    pub fn set_fops(&mut self, fops: file::Ops<T>) -> &mut Self {
+    pub fn set_fops<U: file::Operations>(&mut self, fops: file::Ops<U>) -> &mut Self {
         // SAFETY: By the type invariants, it's ok to modify the inode.
         let inode = unsafe { self.0.as_mut() };
         inode.__bindgen_anon_3.i_fop = fops.0;
@@ -588,10 +588,15 @@ pub struct Params<T> {
     pub value: T,
 }
 
-/// Represents inode operations.
-pub struct Ops<T: FileSystem + ?Sized>(*const bindings::inode_operations, PhantomData<T>);
+#[vtable]
+impl Operations for () {
+    type FileSystem = UnspecifiedFS;
+}
 
-impl<T: FileSystem + ?Sized> Ops<T> {
+/// Represents inode operations.
+pub struct Ops<T: Operations + ?Sized = ()>(*const bindings::inode_operations, PhantomData<T>);
+
+impl<T: Operations + ?Sized> Ops<T> {
     /// Returns inode operations for symbolic links that are stored in a single page.
     pub fn page_symlink_inode() -> Self {
         // SAFETY: This is a constant in C, it never changes.
@@ -611,7 +616,8 @@ impl<T: FileSystem + ?Sized> Ops<T> {
     }
 
     /// Creates the inode operations from a type that implements the [`Operations`] trait.
-    pub const fn new<U: Operations<FileSystem = T> + ?Sized>() -> Self {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
         struct Table<T: Operations + ?Sized>(PhantomData<T>);
         impl<T: Operations + ?Sized> Table<T> {
             const TABLE: bindings::inode_operations = bindings::inode_operations {
@@ -763,7 +769,7 @@ impl<T: FileSystem + ?Sized> Ops<T> {
                 })
             }
         }
-        Self(&Table::<U>::TABLE, PhantomData)
+        Self(&Table::<T>::TABLE, PhantomData)
     }
 }
 

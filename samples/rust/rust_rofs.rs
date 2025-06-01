@@ -56,8 +56,8 @@ const ENTRIES: [Entry; 4] = [
     },
 ];
 
-const DIR_FOPS: file::Ops<RoFs> = file::Ops::new::<RoFs>();
-const DIR_IOPS: inode::Ops<RoFs> = inode::Ops::new::<RoFs>();
+const DIR_FOPS: file::Ops<RoFsDir> = file::Ops::new();
+const DIR_IOPS: inode::Ops<RoFsDir> = inode::Ops::new();
 const FILE_AOPS: address_space::Ops<RoFs> = address_space::Ops::new::<RoFs>();
 
 #[vtable]
@@ -100,7 +100,7 @@ impl RoFs {
                 (0o555, 2, ENTRIES.len().try_into()?, inode::Type::Dir)
             }
             inode::Type::Reg => {
-                new.set_fops(file::Ops::generic_ro_file())
+                new.set_fops(file::Ops::<()>::generic_ro_file())
                     .set_aops(FILE_AOPS);
                 (0o444, 1, e.contents.len().try_into()?, inode::Type::Reg)
             }
@@ -109,7 +109,7 @@ impl RoFs {
                     pr_err!("Invalid symlink contents: {err:?}\n");
                     ENOENT
                 })?;
-                new.set_iops(inode::Ops::simple_symlink_inode());
+                new.set_iops(inode::Ops::<()>::simple_symlink_inode());
                 (
                     0o444,
                     1,
@@ -161,9 +161,11 @@ impl fs::FileSystem for RoFs {
     }
 }
 
+struct RoFsDir;
+
 #[vtable]
-impl inode::Operations for RoFs {
-    type FileSystem = Self;
+impl inode::Operations for RoFsDir {
+    type FileSystem = RoFs;
 
     fn get_link<'a>(
         _dentry: Option<&DEntry<Self::FileSystem>>,
@@ -176,9 +178,9 @@ impl inode::Operations for RoFs {
     }
 
     fn lookup(
-        parent: &Locked<&INode<Self>, inode::ReadSem>,
-        dentry: dentry::Unhashed<'_, Self>,
-    ) -> Result<Option<ARef<DEntry<Self>>>> {
+        parent: &Locked<&INode<Self::FileSystem>, inode::ReadSem>,
+        dentry: dentry::Unhashed<'_, Self::FileSystem>,
+    ) -> Result<Option<ARef<DEntry<Self::FileSystem>>>> {
         // SAFETY: todo
         pr_info!("lookup called for dentry: {:?}\n", unsafe {
             CStr::from_bytes_with_nul_unchecked(dentry.name())
@@ -191,7 +193,7 @@ impl inode::Operations for RoFs {
         let name = dentry.name();
         for e in &ENTRIES {
             if name == e.name {
-                let inode = Self::iget(parent.super_block(), e)?;
+                let inode = RoFs::iget(parent.super_block(), e)?;
                 return dentry.splice_alias(Some(inode));
             }
         }
@@ -201,43 +203,20 @@ impl inode::Operations for RoFs {
 }
 
 #[vtable]
-impl address_space::Operations for RoFs {
-    type FileSystem = Self;
+impl file::Operations for RoFsDir {
+    type FileSystem = RoFs;
 
-    fn read_folio(_: Option<&File<Self>>, mut folio: Locked<&Folio<PageCache<Self>>>) -> Result {
-        let data = folio.inode().data().contents;
-        let pos = usize::try_from(folio.pos()).unwrap_or(usize::MAX);
-        let copied = if pos >= data.len() {
-            0
-        } else {
-            let to_copy = core::cmp::min(data.len() - pos, folio.size());
-            folio.write(0, &data[pos..][..to_copy])?;
-            to_copy
-        };
-
-        folio.zero_out(copied, folio.size() - copied)?;
-        folio.mark_uptodate();
-        folio.flush_dcache();
-
-        Ok(())
-    }
-}
-
-#[vtable]
-impl file::Operations for RoFs {
-    type FileSystem = Self;
-
-    fn seek(file: &File<Self>, offset: Offset, whence: file::Whence) -> Result<Offset> {
+    fn seek(file: &File<Self::FileSystem>, offset: Offset, whence: file::Whence) -> Result<Offset> {
         file::generic_seek(file, offset, whence)
     }
 
-    fn read(_: &File<Self>, _: &mut UserSliceWriter, _: &mut Offset) -> Result<usize> {
+    fn read(_: &File<Self::FileSystem>, _: &mut UserSliceWriter, _: &mut Offset) -> Result<usize> {
         Err(EISDIR)
     }
 
     fn read_dir(
-        _file: &File<Self>,
-        inode: &Locked<&INode<Self>, inode::ReadSem>,
+        _file: &File<Self::FileSystem>,
+        inode: &Locked<&INode<Self::FileSystem>, inode::ReadSem>,
         emitter: &mut file::DirEmitter,
     ) -> Result {
         if inode.ino() != 1 {
@@ -254,6 +233,34 @@ impl file::Operations for RoFs {
                 break;
             }
         }
+
+        Ok(())
+    }
+}
+
+#[vtable]
+impl address_space::Operations for RoFs {
+    type FileSystem = RoFs;
+
+    fn read_folio(
+        _: Option<&File<Self::FileSystem>>,
+        mut folio: Locked<&Folio<PageCache<Self::FileSystem>>>,
+    ) -> Result {
+        pr_info!("read_folio called for folio at pos: {}, size: {}\n", folio.pos(), folio.size());
+
+        let data = folio.inode().data().contents;
+        let pos = usize::try_from(folio.pos()).unwrap_or(usize::MAX);
+        let copied = if pos >= data.len() {
+            0
+        } else {
+            let to_copy = core::cmp::min(data.len() - pos, folio.size());
+            folio.write(0, &data[pos..][..to_copy])?;
+            to_copy
+        };
+
+        folio.zero_out(copied, folio.size() - copied)?;
+        folio.mark_uptodate();
+        folio.flush_dcache();
 
         Ok(())
     }

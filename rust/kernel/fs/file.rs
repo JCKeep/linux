@@ -688,10 +688,15 @@ pub trait Operations {
     }
 }
 
-/// Represents file operations.
-pub struct Ops<T: FileSystem + ?Sized>(pub(crate) *const bindings::file_operations, PhantomData<T>);
+#[vtable]
+impl Operations for () {
+    type FileSystem = UnspecifiedFS;
+}
 
-impl<T: FileSystem + ?Sized> Ops<T> {
+/// Represents file operations.
+pub struct Ops<T: Operations + ?Sized>(pub(crate) *const bindings::file_operations, PhantomData<T>);
+
+impl<T: Operations + ?Sized> Ops<T> {
     /// Returns file operations for page-cache-based ro files.
     pub fn generic_ro_file() -> Self {
         // SAFETY: This is a constant in C, it never changes.
@@ -699,7 +704,8 @@ impl<T: FileSystem + ?Sized> Ops<T> {
     }
 
     /// Creates file operations from a type that implements the [`Operations`] trait.
-    pub const fn new<U: Operations<FileSystem = T> + ?Sized>() -> Self {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
         struct Table<T: Operations + ?Sized>(PhantomData<T>);
         impl<T: Operations + ?Sized> Table<T> {
             const TABLE: bindings::file_operations = bindings::file_operations {
@@ -800,6 +806,6 @@ impl<T: FileSystem + ?Sized> Ops<T> {
                 })
             }
         }
-        Self(&Table::<U>::TABLE, PhantomData)
+        Self(&Table::<T>::TABLE, PhantomData)
     }
 }
