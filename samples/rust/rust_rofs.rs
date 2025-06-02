@@ -4,7 +4,8 @@
 
 #![allow(clippy::ignored_unit_patterns)]
 use kernel::fs::{
-    address_space, dentry, dentry::DEntry, file, file::File, inode, inode::INode, sb, Offset,
+    address_space, dentry, dentry::DEntry, file, file::File, inode, inode::INode, inode::Ino, sb,
+    Offset,
 };
 use kernel::prelude::*;
 use kernel::str::CString;
@@ -15,7 +16,7 @@ use kernel::{c_str, folio::Folio, folio::PageCache, fs, time::UNIX_EPOCH};
 kernel::module_fs! {
     type: RoFs,
     name: "rust_rofs",
-    author: "Rust for Linux Contributors",
+    author: "Rust for Linux Contributors, Guangbo Cui",
     description: "Rust read-only file system sample",
     license: "GPL",
 }
@@ -24,37 +25,77 @@ struct Entry {
     name: &'static [u8],
     ino: u64,
     etype: inode::Type,
-    contents: &'static [u8],
+    contents: Either<&'static [u8], Option<&'static [Entry]>>,
 }
 
-const FILE_NAME: &CStr = c_str!("./test.txt");
-
-const ENTRIES: [Entry; 4] = [
+const ENTRIES: [Entry; 5] = [
     Entry {
         name: b".",
         ino: 1,
         etype: inode::Type::Dir,
-        contents: b"",
+        contents: Either::Right(None),
     },
     Entry {
         name: b"..",
         ino: 1,
         etype: inode::Type::Dir,
-        contents: b"",
+        contents: Either::Right(None),
     },
     Entry {
         name: b"test.txt",
         ino: 2,
         etype: inode::Type::Reg,
-        contents: b"hello world\n",
+        contents: Either::Left(c_str!("hello world\n").as_bytes_with_nul()),
     },
     Entry {
         name: b"link.txt",
         ino: 3,
         etype: inode::Type::Lnk(None),
-        contents: FILE_NAME.as_bytes_with_nul(),
+        contents: Either::Left(c_str!("./test.txt").as_bytes_with_nul()),
+    },
+    Entry {
+        name: b"subdir",
+        ino: 4,
+        etype: inode::Type::Dir,
+        contents: Either::Right(Some(&SUBDIR_ENTRIES)),
     },
 ];
+
+const SUBDIR_ENTRIES: [Entry; 5] = [
+    Entry {
+        name: b".",
+        ino: 4,
+        etype: inode::Type::Dir,
+        contents: Either::Right(None),
+    },
+    Entry {
+        name: b"..",
+        ino: 4,
+        etype: inode::Type::Dir,
+        contents: Either::Right(None),
+    },
+    Entry {
+        name: b"test1.txt",
+        ino: 5,
+        etype: inode::Type::Reg,
+        contents: Either::Left(c_str!("hello world in subdir\n").as_bytes_with_nul()),
+    },
+    Entry {
+        name: b"link1.txt",
+        ino: 6,
+        etype: inode::Type::Lnk(None),
+        contents: Either::Left(c_str!("./test1.txt").as_bytes_with_nul()),
+    },
+    Entry {
+        name: b"link.txt",
+        ino: 7,
+        etype: inode::Type::Lnk(None),
+        contents: Either::Left(c_str!("../test.txt").as_bytes_with_nul()),
+    },
+];
+
+// The mapping of inode numbers to entries.
+const INODE_ENTRIES_MAP: [(Ino, &[Entry]); 2] = [(1, &ENTRIES), (4, &SUBDIR_ENTRIES)];
 
 const DIR_FOPS: file::Ops<RoFsDir> = file::Ops::new();
 const DIR_IOPS: inode::Ops<RoFsDir> = inode::Ops::new();
@@ -100,12 +141,20 @@ impl RoFs {
                 (0o555, 2, ENTRIES.len().try_into()?, inode::Type::Dir)
             }
             inode::Type::Reg => {
+                let contents = match e.contents {
+                    Either::Left(contents) => contents,
+                    Either::Right(_) => return Err(EISDIR),
+                };
                 new.set_fops(file::Ops::<()>::generic_ro_file())
                     .set_aops(FILE_AOPS);
-                (0o444, 1, e.contents.len().try_into()?, inode::Type::Reg)
+                (0o444, 1, contents.len().try_into()?, inode::Type::Reg)
             }
             inode::Type::Lnk(_) => {
-                let s = CStr::from_bytes_with_nul(e.contents).map_err(|err| {
+                let contents = match e.contents {
+                    Either::Left(contents) => contents,
+                    Either::Right(_) => return Err(EISDIR),
+                };
+                let s = CStr::from_bytes_with_nul(contents).map_err(|err| {
                     pr_err!("Invalid symlink contents: {err:?}\n");
                     ENOENT
                 })?;
@@ -113,7 +162,7 @@ impl RoFs {
                 (
                     0o444,
                     1,
-                    e.contents.len().try_into()?,
+                    contents.len().try_into()?,
                     inode::Type::Lnk(Some(CString::try_from(s)?)),
                 )
             }
@@ -163,6 +212,18 @@ impl fs::FileSystem for RoFs {
 
 struct RoFsDir;
 
+impl RoFsDir {
+    fn search_entries(ino: Ino) -> Option<&'static [Entry]> {
+        INODE_ENTRIES_MAP.iter().find_map(|(entry_ino, entries)| {
+            if *entry_ino == ino {
+                Some(*entries)
+            } else {
+                None
+            }
+        })
+    }
+}
+
 #[vtable]
 impl inode::Operations for RoFsDir {
     type FileSystem = RoFs;
@@ -183,15 +244,20 @@ impl inode::Operations for RoFsDir {
     ) -> Result<Option<ARef<DEntry<Self::FileSystem>>>> {
         // SAFETY: todo
         pr_info!("lookup called for dentry: {:?}\n", unsafe {
-            CStr::from_bytes_with_nul_unchecked(dentry.name())
+            CStr::from_char_ptr(dentry.name().as_ptr().cast())
         });
 
-        if parent.ino() != 1 {
+        if matches!(parent.data().contents, Either::Left(_)) {
             return dentry.splice_alias(None);
         }
 
+        let entries = Self::search_entries(parent.ino()).ok_or_else(|| {
+            pr_err!("No entries found for inode: {}\n", parent.ino());
+            ENOENT
+        })?;
+
         let name = dentry.name();
-        for e in &ENTRIES {
+        for e in entries {
             if name == e.name {
                 let inode = RoFs::iget(parent.super_block(), e)?;
                 return dentry.splice_alias(Some(inode));
@@ -219,16 +285,21 @@ impl file::Operations for RoFsDir {
         inode: &Locked<&INode<Self::FileSystem>, inode::ReadSem>,
         emitter: &mut file::DirEmitter,
     ) -> Result {
-        if inode.ino() != 1 {
+        if matches!(inode.data().contents, Either::Left(_)) {
             return Ok(());
         }
+
+        let entries = Self::search_entries(inode.ino()).ok_or_else(|| {
+            pr_err!("No entries found for inode: {}\n", inode.ino());
+            ENOENT
+        })?;
 
         let pos = emitter.pos();
-        if pos >= ENTRIES.len().try_into()? {
+        if pos >= entries.len().try_into()? {
             return Ok(());
         }
 
-        for e in ENTRIES.iter().skip(pos.try_into()?) {
+        for e in entries.iter().skip(pos.try_into()?) {
             if !emitter.emit(1, e.name, e.ino, (&e.etype).into()) {
                 break;
             }
@@ -246,9 +317,15 @@ impl address_space::Operations for RoFs {
         _: Option<&File<Self::FileSystem>>,
         mut folio: Locked<&Folio<PageCache<Self::FileSystem>>>,
     ) -> Result {
-        pr_info!("read_folio called for folio at pos: {}, size: {}\n", folio.pos(), folio.size());
-
-        let data = folio.inode().data().contents;
+        pr_info!(
+            "read_folio called for folio at pos: {}, size: {}\n",
+            folio.pos(),
+            folio.size()
+        );
+        let data = match folio.inode().data().contents {
+            Either::Left(contents) => contents,
+            Either::Right(_) => return Err(EISDIR),
+        };
         let pos = usize::try_from(folio.pos()).unwrap_or(usize::MAX);
         let copied = if pos >= data.len() {
             0
