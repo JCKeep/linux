@@ -384,6 +384,19 @@ quiet_cmd_rustc_library = $(if $(skip_clippy),RUSTC,$(RUSTC_OR_CLIPPY_QUIET)) L 
 	$(if $(rustc_objcopy),;$(OBJCOPY) $(rustc_objcopy) $@) \
 	$(cmd_objtool)
 
+quiet_cmd_rustc_k_library = $(if $(skip_clippy),RUSTC,$(RUSTC_OR_CLIPPY_QUIET)) L $@
+      cmd_rustc_k_library = \
+	OBJTREE=$(abspath $(objtree)) \
+	rustup run 1.86 klint \
+		$(filter-out $(skip_flags),$(rust_flags) $(rustc_target_flags)) \
+		--emit=dep-info=$(depfile) --emit=obj=$@ \
+		--emit=metadata=$(dir $@)$(patsubst %.o,lib%.rmeta,$(notdir $@)) \
+		--crate-type rlib -L$(objtree)/$(obj) \
+		--crate-name $(patsubst %.o,%,$(notdir $@)) $< \
+		--sysroot=/dev/null -Zcrate-attr=feature\(register_tool\) -Zcrate-attr=register_tool\(klint\) \
+	$(if $(rustc_objcopy),;$(OBJCOPY) $(rustc_objcopy) $@) \
+	$(cmd_objtool)
+
 rust-analyzer:
 	$(Q)MAKEFLAGS= $(srctree)/scripts/generate_rust_analyzer.py \
 		--cfgs='core=$(core-cfgs)' \
@@ -415,6 +428,12 @@ endif
 
 define rule_rustc_library
 	$(call cmd_and_fixdep,rustc_library)
+	$(call cmd,gen_objtooldep)
+	$(call cmd,gendwarfksyms)
+endef
+
+define rule_rustc_k_library
+	$(call cmd_and_fixdep,rustc_k_library)
 	$(call cmd,gen_objtooldep)
 	$(call cmd,gendwarfksyms)
 endef

@@ -25,7 +25,7 @@ endif
 
 ifdef CONFIG_DEBUG_INFO_REDUCED
 DEBUG_CFLAGS	+= -fno-var-tracking
-DEBUG_RUSTFLAGS	+= -Cdebuginfo=1
+DEBUG_RUSTFLAGS	+= -Cdebuginfo=2
 ifdef CONFIG_CC_IS_GCC
 DEBUG_CFLAGS	+= -femit-struct-debug-baseonly
 endif
