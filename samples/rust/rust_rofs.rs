@@ -25,7 +25,7 @@ struct Entry {
     name: &'static [u8],
     ino: u64,
     etype: inode::Type,
-    contents: Either<&'static [u8], Option<&'static [Entry]>>,
+    contents: Option<&'static [u8]>,
 }
 
 const ENTRIES: [Entry; 5] = [
@@ -33,31 +33,31 @@ const ENTRIES: [Entry; 5] = [
         name: b".",
         ino: 1,
         etype: inode::Type::Dir,
-        contents: Either::Right(None),
+        contents: None,
     },
     Entry {
         name: b"..",
         ino: 1,
         etype: inode::Type::Dir,
-        contents: Either::Right(None),
+        contents: None,
     },
     Entry {
         name: b"test.txt",
         ino: 2,
         etype: inode::Type::Reg,
-        contents: Either::Left(c_str!("hello world\n").as_bytes_with_nul()),
+        contents: Some(c_str!("hello world\n").as_bytes_with_nul()),
     },
     Entry {
         name: b"link.txt",
         ino: 3,
         etype: inode::Type::Lnk(None),
-        contents: Either::Left(c_str!("./test.txt").as_bytes_with_nul()),
+        contents: Some(c_str!("./test.txt").as_bytes_with_nul()),
     },
     Entry {
         name: b"subdir",
         ino: 4,
         etype: inode::Type::Dir,
-        contents: Either::Right(Some(&SUBDIR_ENTRIES)),
+        contents: None,
     },
 ];
 
@@ -66,31 +66,31 @@ const SUBDIR_ENTRIES: [Entry; 5] = [
         name: b".",
         ino: 4,
         etype: inode::Type::Dir,
-        contents: Either::Right(None),
+        contents: None,
     },
     Entry {
         name: b"..",
         ino: 4,
         etype: inode::Type::Dir,
-        contents: Either::Right(None),
+        contents: None,
     },
     Entry {
         name: b"test1.txt",
         ino: 5,
         etype: inode::Type::Reg,
-        contents: Either::Left(c_str!("hello world in subdir\n").as_bytes_with_nul()),
+        contents: Some(c_str!("hello world in subdir\n").as_bytes_with_nul()),
     },
     Entry {
         name: b"link1.txt",
         ino: 6,
         etype: inode::Type::Lnk(None),
-        contents: Either::Left(c_str!("./test1.txt").as_bytes_with_nul()),
+        contents: Some(c_str!("./test1.txt").as_bytes_with_nul()),
     },
     Entry {
         name: b"link.txt",
         ino: 7,
         etype: inode::Type::Lnk(None),
-        contents: Either::Left(c_str!("../test.txt").as_bytes_with_nul()),
+        contents: Some(c_str!("../test.txt").as_bytes_with_nul()),
     },
 ];
 
@@ -142,8 +142,8 @@ impl RoFs {
             }
             inode::Type::Reg => {
                 let contents = match e.contents {
-                    Either::Left(contents) => contents,
-                    Either::Right(_) => return Err(EISDIR),
+                    Some(contents) => contents,
+                    None => return Err(EISDIR),
                 };
                 new.set_fops(file::Ops::<()>::generic_ro_file())
                     .set_aops(FILE_AOPS);
@@ -151,8 +151,8 @@ impl RoFs {
             }
             inode::Type::Lnk(_) => {
                 let contents = match e.contents {
-                    Either::Left(contents) => contents,
-                    Either::Right(_) => return Err(EISDIR),
+                    Some(contents) => contents,
+                    None => return Err(EISDIR),
                 };
                 let s = CStr::from_bytes_with_nul(contents).map_err(|err| {
                     pr_err!("Invalid symlink contents: {err:?}\n");
@@ -247,7 +247,7 @@ impl inode::Operations for RoFsDir {
             CStr::from_char_ptr(dentry.name().as_ptr().cast())
         });
 
-        if matches!(parent.data().contents, Either::Left(_)) {
+        if !matches!(parent.data().etype, inode::Type::Dir) {
             return dentry.splice_alias(None);
         }
 
@@ -285,7 +285,7 @@ impl file::Operations for RoFsDir {
         inode: &Locked<&INode<Self::FileSystem>, inode::ReadSem>,
         emitter: &mut file::DirEmitter,
     ) -> Result {
-        if matches!(inode.data().contents, Either::Left(_)) {
+        if !matches!(inode.data().etype, inode::Type::Dir) {
             return Ok(());
         }
 
@@ -323,8 +323,8 @@ impl address_space::Operations for RoFs {
             folio.size()
         );
         let data = match folio.inode().data().contents {
-            Either::Left(contents) => contents,
-            Either::Right(_) => return Err(EISDIR),
+            Some(contents) => contents,
+            None => return Err(EISDIR),
         };
         let pos = usize::try_from(folio.pos()).unwrap_or(usize::MAX);
         let copied = if pos >= data.len() {
