@@ -741,3 +741,71 @@ impl<T: Lockable<M> + AlwaysRefCounted, M> From<Locked<&T, M>> for Locked<ARef<T
         unsafe { Locked::new(aref) }
     }
 }
+
+/// A type that can be represented in little-endian bytes.
+pub trait LittleEndian {
+    /// Converts from native to little-endian encoding.
+    fn to_le(self) -> Self;
+
+    /// Converts from little-endian to the CPU's encoding.
+    fn to_cpu(self) -> Self;
+}
+
+macro_rules! define_le {
+    ($($t:ty),+) => {
+        $(
+        impl LittleEndian for $t {
+            fn to_le(self) -> Self {
+                Self::to_le(self)
+            }
+
+            fn to_cpu(self) -> Self {
+                Self::from_le(self)
+            }
+        }
+        )*
+    };
+}
+
+define_le!(u8, u16, u32, u64, i8, i16, i32, i64);
+
+/// A little-endian representation of `T`.
+///
+/// # Examples
+///
+/// ```
+/// use kernel::types::LE;
+///
+/// struct Example {
+///     a: LE<u32>,
+///     b: LE<u32>,
+/// }
+///
+/// fn new(x: u32, y: u32) -> Example {
+///     Example {
+///         a: x.into(), // Converts to LE.
+///         b: y.into(), // Converts to LE.
+///     }
+/// }
+///
+/// fn sum(e: &Example) -> u32 {
+///     // `value` extracts the value in cpu representation.
+///     e.a.value() + e.b.value()
+/// }
+/// ```
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct LE<T: LittleEndian + Copy>(T);
+
+impl<T: LittleEndian + Copy> LE<T> {
+    /// Returns the native-endian value.
+    pub fn value(&self) -> T {
+        self.0.to_cpu()
+    }
+}
+
+impl<T: LittleEndian + Copy> core::convert::From<T> for LE<T> {
+    fn from(value: T) -> LE<T> {
+        LE(value.to_le())
+    }
+}

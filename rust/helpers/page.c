@@ -89,3 +89,8 @@ bool rust_helper_folio_test_highmem(struct folio *folio)
 {
 	return folio_test_highmem(folio);
 }
+
+struct folio *rust_helper_folio_alloc(gfp_t gfp, unsigned int order)
+{
+	return folio_alloc(gfp, order);
+}

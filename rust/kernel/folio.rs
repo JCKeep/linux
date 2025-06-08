@@ -138,6 +138,25 @@ impl<S> Folio<S> {
     }
 }
 
+impl Folio<Unspecified> {
+    /// Tries to allocate a new folio.
+    ///
+    /// On success, returns a folio made up of 2^order pages.
+    pub fn alloc(order: u32) -> Result<UniqueFolio> {
+        if order > bindings::MAX_PAGE_ORDER {
+            return Err(EDOM);
+        }
+
+        // SAFETY: We checked that `order` is within the max allowed value.
+        let f = ptr::NonNull::new(unsafe { bindings::folio_alloc(bindings::GFP_KERNEL, order) })
+            .ok_or(ENOMEM)?;
+
+        // SAFETY: The folio returned by `folio_alloc` is referenced. The ownership of the
+        // reference is transferred to the `ARef` instance.
+        Ok(UniqueFolio(unsafe { ARef::from_raw(f.cast::<Self>()) }))
+    }
+}
+
 impl<T: FileSystem + ?Sized> Folio<PageCache<T>> {
     /// Returns the inode for which this folio holds data.
     pub fn inode(&self) -> &INode<T> {
@@ -301,5 +320,38 @@ impl<T: Deref<Target = Folio<S>>, S> Locked<T> {
             s.fill(0);
             Ok(())
         })
+    }
+}
+
+/// A [`Folio`] that has a single reference to it.
+pub struct UniqueFolio(pub(crate) ARef<Folio>);
+
+impl UniqueFolio {
+    /// Maps the contents of a folio page into a slice.
+    pub fn map(&self, offset: usize) -> Result<MapGuard<'_>> {
+        if offset >= self.0.size() {
+            return Err(EDOM);
+        }
+
+        let page_index = offset / bindings::PAGE_SIZE;
+        let page_offset = offset % bindings::PAGE_SIZE;
+
+        // SAFETY: We just checked that the index is within bounds of the folio.
+        let page = unsafe { bindings::folio_page(self.0 .0.get(), page_index) };
+
+        // SAFETY: `page` is valid because it was returned by `folio_page` above.
+        let ptr = unsafe { bindings::kmap(page) };
+
+        let size = if self.0.test_highmem() {
+            bindings::PAGE_SIZE
+        } else {
+            self.0.size()
+        };
+
+        // SAFETY: We just mapped `ptr`, so it's valid for read.
+        let data = unsafe {
+            core::slice::from_raw_parts(ptr.cast::<u8>().add(page_offset), size - page_offset)
+        };
+        Ok(MapGuard { data, page })
     }
 }

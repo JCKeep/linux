@@ -3,6 +3,7 @@
 //! Traits for transmuting types.
 
 use core::slice;
+use kernel::types::{LittleEndian, LE};
 
 /// Types for which any bit pattern is valid.
 ///
@@ -14,7 +15,38 @@ use core::slice;
 /// # Safety
 ///
 /// All bit-patterns must be valid for this type. This type must not have interior mutability.
-pub unsafe trait FromBytes {}
+pub unsafe trait FromBytes: Sized {
+    /// Converts the given byte slice into a shared reference to [`Self`].
+    ///
+    /// It fails if the size or alignment requirements are not satisfied.
+    fn from_bytes(data: &[u8], offset: usize) -> Option<&Self> {
+        if offset > data.len() {
+            return None;
+        }
+        let data = &data[offset..];
+        let ptr = data.as_ptr();
+        if ptr as usize % align_of::<Self>() != 0 || data.len() < size_of::<Self>() {
+            return None;
+        }
+        // SAFETY: The memory is valid for read because we have a reference to it. We have just
+        // checked the minimum size and alignment as well.
+        Some(unsafe { &*ptr.cast() })
+    }
+
+    /// Converts the given byte slice into a shared slice of [`Self`].
+    ///
+    /// It fails if the size or alignment requirements are not satisfied.
+    fn from_bytes_to_slice(data: &[u8]) -> Option<&[Self]> {
+        let ptr = data.as_ptr();
+        if ptr as usize % align_of::<Self>() != 0 {
+            return None;
+        }
+        // SAFETY: The memory is valid for read because we have a reference to it. We have just
+        // checked the minimum alignment as well, and the length of the slice is calculated from
+        // the length of `Self`.
+        Some(unsafe { core::slice::from_raw_parts(ptr.cast(), data.len() / size_of::<Self>()) })
+    }
+}
 
 macro_rules! impl_frombytes {
     ($($({$($generics:tt)*})? $t:ty, )*) => {
@@ -30,8 +62,51 @@ impl_frombytes! {
 
     // SAFETY: If all bit patterns are acceptable for individual values in an array, then all bit
     // patterns are also acceptable for arrays of that type.
-    {<T: FromBytes>} [T],
     {<T: FromBytes, const N: usize>} [T; N],
+    {<T: FromBytes + Copy + LittleEndian>} LE<T>,
+}
+
+/// Derive [`FromBytes`] for the structs defined in the block.
+///
+/// # Examples
+///
+/// ```
+/// kernel::derive_frombytes! {
+///     #[repr(C)]
+///     struct SuperBlock {
+///         a: u16,
+///         _padding: [u8; 6],
+///         b: u64,
+///     }
+///
+///     #[repr(C)]
+///     struct Inode {
+///         a: u16,
+///         b: u16,
+///         c: u32,
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! derive_frombytes {
+    ($($(#[$outer:meta])* $outerv:vis struct $name:ident {
+        $($(#[$m:meta])* $v:vis $id:ident : $t:ty),* $(,)?
+    })*)=> {
+        $(
+            $(#[$outer])*
+            $outerv struct $name {
+                $(
+                    $(#[$m])*
+                    $v $id: $t,
+                )*
+            }
+            unsafe impl $crate::transmute::FromBytes for $name {}
+            const _: () = {
+                const fn is_readable_from_bytes<T: $crate::transmute::FromBytes>() {}
+                $(is_readable_from_bytes::<$t>();)*
+            };
+        )*
+    };
 }
 
 /// Types that can be viewed as an immutable slice of initialized bytes.
@@ -49,7 +124,7 @@ impl_frombytes! {
 ///
 /// Values of this type may not contain any uninitialized bytes. This type must not have interior
 /// mutability.
-pub unsafe trait AsBytes {}
+pub unsafe trait AsBytes: Sized {}
 
 macro_rules! impl_asbytes {
     ($($({$($generics:tt)*})? $t:ty, )*) => {
@@ -64,11 +139,9 @@ impl_asbytes! {
     i8, i16, i32, i64, isize,
     bool,
     char,
-    str,
 
     // SAFETY: If individual values in an array have no uninitialized portions, then the array
     // itself does not have any uninitialized portions either.
-    {<T: AsBytes>} [T],
     {<T: AsBytes, const N: usize>} [T; N],
 }
 

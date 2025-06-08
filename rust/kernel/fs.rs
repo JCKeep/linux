@@ -22,6 +22,8 @@ pub use inode::INode;
 pub use sb::SuperBlock;
 
 pub mod address_space;
+#[cfg(CONFIG_BUFFER_HEAD)]
+pub mod buffer;
 pub mod dentry;
 pub mod file;
 pub mod inode;
